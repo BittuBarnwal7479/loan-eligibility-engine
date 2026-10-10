@@ -20,13 +20,13 @@ BUCKET = "test-upload-bucket"
 def s3_settings(monkeypatch):
     monkeypatch.setenv("STORAGE_MODE", "s3")
     monkeypatch.setenv("UPLOAD_BUCKET", BUCKET)
-    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    monkeypatch.setenv("AWS_REGION", "ap-southeast-2")
     for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
         monkeypatch.setenv(k, "testing")
     get_settings.cache_clear()
     with mock_aws():
-        boto3.client("s3", region_name="ap-south-1").create_bucket(
-            Bucket=BUCKET, CreateBucketConfiguration={"LocationConstraint": "ap-south-1"}
+        boto3.client("s3", region_name="ap-southeast-2").create_bucket(
+            Bucket=BUCKET, CreateBucketConfiguration={"LocationConstraint": "ap-southeast-2"}
         )
         yield get_settings()
     get_settings.cache_clear()
@@ -47,7 +47,7 @@ def test_presigned_post_enforces_key_and_size(s3_settings):
 
 def test_read_object_streams_and_enforces_size(s3_settings, monkeypatch):
     key = object_key(uuid.uuid4())
-    boto3.client("s3", region_name="ap-south-1").put_object(Bucket=BUCKET, Key=key, Body=b"a,b\n1,2\n")
+    boto3.client("s3", region_name="ap-southeast-2").put_object(Bucket=BUCKET, Key=key, Body=b"a,b\n1,2\n")
     assert b"".join(read_object(s3_settings, BUCKET, key)) == b"a,b\n1,2\n"
     monkeypatch.setenv("MAX_UPLOAD_BYTES", "3")
     get_settings.cache_clear()
@@ -73,7 +73,7 @@ def test_s3_object_processed_end_to_end_with_mocked_s3(db, s3_settings):
     with connection() as conn:
         batch = ingestion.create_batch(conn, "users.csv", BUCKET)
     body = b"user_id,email,monthly_income,credit_score,employment_status,age\nU1,a@example.com,1000,700,salaried,30\n"
-    boto3.client("s3", region_name="ap-south-1").put_object(Bucket=BUCKET, Key=batch["storage_key"], Body=body)
+    boto3.client("s3", region_name="ap-southeast-2").put_object(Bucket=BUCKET, Key=batch["storage_key"], Body=body)
     event = {"Records": [{"s3": {"bucket": {"name": BUCKET}, "object": {"key": batch["storage_key"]}}}]}
     first = handler(event, None)
     duplicate = handler(event, None)  # S3 at-least-once delivery

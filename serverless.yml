@@ -47,7 +47,7 @@ provider:
   name: aws
   runtime: python3.12
   architecture: x86_64
-  region: ${opt:region, 'ap-south-1'}
+  region: ${opt:region, 'ap-southeast-2'}
   stage: ${opt:stage, 'dev'}
   memorySize: 512
   timeout: 29

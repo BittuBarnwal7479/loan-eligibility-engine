@@ -61,7 +61,7 @@ def credentials(env: dict[str, str]) -> list[dict]:
     ]
     if env.get("AWS_SES_ACCESS_KEY_ID") and env.get("AWS_SES_SECRET_ACCESS_KEY"):
         creds.append({"id": "LoanEngAwsSes001", "name": "AWS SES sender (least-privilege IAM user)", "type": "aws",
-                      "data": {"region": env.get("AWS_SES_REGION", "ap-south-1"),
+                      "data": {"region": env.get("AWS_SES_REGION", "ap-southeast-2"),
                                "accessKeyId": env["AWS_SES_ACCESS_KEY_ID"],
                                "secretAccessKey": env["AWS_SES_SECRET_ACCESS_KEY"]}})
     return creds
