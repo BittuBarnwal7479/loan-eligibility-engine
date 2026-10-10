@@ -112,7 +112,7 @@ def get_settings() -> Settings:
         storage_mode=storage_mode,
         local_upload_dir=_env("LOCAL_UPLOAD_DIR", "/data/uploads") or "/data/uploads",
         s3_bucket=_env("UPLOAD_BUCKET"),
-        aws_region=_env("AWS_REGION", "ap-south-1") or "ap-south-1",
+        aws_region=_env("AWS_REGION", "ap-southeast-2") or "ap-southeast-2",
         upload_url_ttl_seconds=_env_int("UPLOAD_URL_TTL_SECONDS", 300),
         max_upload_bytes=_env_int("MAX_UPLOAD_BYTES", 10 * 1024 * 1024),
         max_csv_rows=_env_int("MAX_CSV_ROWS", 200_000),

@@ -4,7 +4,7 @@
 
 ## What gets created
 
-| Resource | Notes | Approx. cost (ap-south-1, check current pricing) |
+| Resource | Notes | Approx. cost (ap-southeast-2, check current pricing) |
 |---|---|---|
 | RDS PostgreSQL 17 `db.t4g.micro`, 20 GB gp3, single-AZ, private | **Bills every hour it exists, even when idle** | ≈ US$13-15/month + storage ≈ US$2.5/month (free tier may apply to new accounts; don't assume it) |
 | S3 bucket (private, SSE-S3, uploads expire after 7 days) | | cents |
@@ -23,7 +23,7 @@ Deliberately **not** used: NAT gateway (≈ US$32+/month plus data), RDS Proxy (
 1. An AWS account and an IAM principal that can deploy CloudFormation, Lambda, API Gateway, S3, RDS, EC2 security groups, IAM roles/policies and SSM. Configure it with `aws configure --profile loan-engine` (never commit keys).
 2. Docker running (the Python requirements plugin builds Linux wheels in a container).
 3. Node 18+ for the Serverless Framework v3 (installed locally via the repo-root `package.json`: `npm install`).
-4. Pick a region (default `ap-south-1`). SES, RDS and Lambda must all be available there.
+4. Pick a region (default `ap-southeast-2`). SES, RDS and Lambda must all be available there.
 5. Default VPC IDs:
    ```bash
    aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text
@@ -64,7 +64,7 @@ The values are resolved at deploy time into Lambda environment variables (encryp
 
 ```bash
 npm install                     # Serverless v3 + python requirements plugin (repo root)
-npx serverless deploy --stage dev --region ap-south-1 --aws-profile loan-engine \
+npx serverless deploy --stage dev --region ap-southeast-2 --aws-profile loan-engine \
   --param="vpcId=vpc-xxxx" \
   --param="subnetIds=subnet-aaaa,subnet-bbbb" \
   --param="routeTableIds=rtb-xxxx" \
