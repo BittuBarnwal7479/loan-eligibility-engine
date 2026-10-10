@@ -1,0 +1,13 @@
+user_id,email,monthly_income,credit_score,employment_status,age
+U0001,user0001@example.com,17600,591,salaried,33
+U0002,user0002@example.com,97100,701,self_employed,69
+U0003,user0003@example.com,56000,721,student,47
+U0004,user0004@example.com,19200,641,salaried,37
+U0005,user0005@example.com,62500,746,salaried,32
+U9001,not-an-email,45000,720,salaried,30
+U9002,u9002@example.com,abc,720,salaried,30
+U9003,u9003@example.com,45000,1200,salaried,30
+U9004,u9004@example.com,45000,720,astronaut,30
+U9005,u9005@example.com,45000,720,salaried,12
+U0001,dup@example.com,1,700,salaried,30
+U9007,u9007@example.com,45000,720,salaried

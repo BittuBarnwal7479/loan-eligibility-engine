@@ -1,0 +1,145 @@
+# Local development stack. No AWS credentials or domain required.
+#
+#   cp .env.example .env   # then replace every "change-me" value
+#   docker compose up -d --build
+#
+# All ports bind to 127.0.0.1 only, so PostgreSQL, n8n and the API are not
+# reachable from other machines on the network.
+
+name: loan-eligibility-engine
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    <<: *restart
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-loan_engine}
+      POSTGRES_USER: ${POSTGRES_USER:-loan_engine}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    <<: *restart
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: local
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-loan_engine}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-loan_engine}
+      STORAGE_MODE: local
+      LOCAL_UPLOAD_DIR: /data/uploads
+      PUBLIC_API_BASE_URL: http://localhost:${API_HOST_PORT:-8081}
+      CORS_ORIGINS: http://localhost:${FRONTEND_HOST_PORT:-5173}
+      UPLOAD_SIGNING_SECRET: ${UPLOAD_SIGNING_SECRET:?set UPLOAD_SIGNING_SECRET in .env}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN in .env}
+      N8N_MATCHING_WEBHOOK_URL: http://n8n:5678/webhook/loan-matching
+      N8N_WEBHOOK_TOKEN: ${N8N_WEBHOOK_TOKEN:?set N8N_WEBHOOK_TOKEN in .env}
+      NOTIFICATION_MODE: ${NOTIFICATION_MODE:-smtp}
+      NOTIFICATION_TEST_RECIPIENT: ${NOTIFICATION_TEST_RECIPIENT:-}
+      NOTIFICATION_FROM_EMAIL: ${NOTIFICATION_FROM_EMAIL:-loan-engine@localhost.test}
+      LLM_ENABLED: ${LLM_ENABLED:-false}
+      LLM_MODEL: ${LLM_MODEL:-claude-opus-5-5}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - uploads:/data/uploads
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-8081}:8000"
+
+  n8n:
+    image: n8nio/n8n:2.43.3
+    <<: *restart
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in .env}
+      N8N_HOST: localhost
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5678/
+      N8N_EDITOR_BASE_URL: http://localhost:5678/
+      N8N_SECURE_COOKIE: "false"          # plain http on localhost only
+      GENERIC_TIMEZONE: ${TIMEZONE:-Asia/Kolkata}
+      TZ: ${TIMEZONE:-Asia/Kolkata}
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false" # workflows read LOAN_API_BASE_URL below (no secrets in env)
+      LOAN_API_BASE_URL: http://api:8000
+      N8N_SELF_BASE_URL: http://localhost:5678
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+    ports:
+      - "127.0.0.1:5678:5678"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.31.4
+    <<: *restart
+    environment:
+      MP_MAX_MESSAGES: "500"
+    ports:
+      - "127.0.0.1:${MAILPIT_UI_HOST_PORT:-8026}:8025"   # web UI; SMTP (1025) stays internal
+
+  frontend:
+    image: node:22-alpine
+    <<: *restart
+    working_dir: /app
+    command: sh -c "npm ci --no-audit --no-fund && npm run dev -- --host 0.0.0.0 --port 5173"
+    environment:
+      VITE_API_BASE_URL: http://localhost:${API_HOST_PORT:-8081}
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-5173}:5173"
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5173/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  # docker compose --profile test run --rm api-tests
+  api-tests:
+    profiles: ["test"]
+    build:
+      context: ./backend
+      args:
+        INSTALL_DEV: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TEST_DATABASE_URL: postgresql://${POSTGRES_USER:-loan_engine}:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      N8N_WORKFLOW_DIR: /n8n/workflows
+    volumes:
+      - ./backend:/app
+      - ./n8n:/n8n:ro
+    command: ["python", "-m", "pytest", "-q"]
+
+volumes:
+  postgres_data:
+  n8n_data:
+  uploads:
+  frontend_node_modules:

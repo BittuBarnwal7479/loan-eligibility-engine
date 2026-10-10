@@ -1,0 +1,56 @@
+# Final audit evidence, 2026-10-10T01:43:18Z
+
+## ruff
+All checks passed!
+47 files already formatted
+
+## docker compose ps
+api Up 7 minutes (healthy) 127.0.0.1:8081->8000/tcp
+frontend Up 3 minutes (healthy) 127.0.0.1:5173->5173/tcp
+mailpit Up About an hour (healthy) 127.0.0.1:8026->8025/tcp
+n8n Up 3 minutes (healthy) 127.0.0.1:5678->5678/tcp
+postgres Up About an hour (healthy) 127.0.0.1:5433->5432/tcp
+
+## e2e users_sample.csv (audit run)
+batch ecc5d153-72ae-4842-a0fe-2a89cd3b9c8e created (storage_mode=local)
+upload -> HTTP 204
+{
+  "status": "COMPLETED",
+  "total_rows": 60,
+  "processed_rows": 60,
+  "failed_rows": 0,
+  "matching_status": "COMPLETED",
+  "notification_status": "COMPLETED"
+}
+matching: {
+  "status": "COMPLETED",
+  "users_considered": 60,
+  "active_products": 8,
+  "total_possible_pairs": 480,
+  "sql_candidate_pairs": 156,
+  "sql_eliminated_pairs": 324,
+  "deterministic_rejections": 0,
+  "eligible_matches": 20,
+  "potential_matches": 136,
+  "llm_invocations": 0,
+  "chunks_processed": 1,
+  "matching_run_id": "48e1e633-23b0-40f4-934c-a42bb5db14a7",
+  "finished_at": "2026-10-10T01:33:04.277679+00:00"
+}
+notifications: {'SENT': 58}
+mailpit: 58 new message(s); recipients: ['test-inbox@localhost.test']
+
+## retry: POST /internal/batches/ecc5d153-72ae-4842-a0fe-2a89cd3b9c8e/trigger-matching
+mail before=176 after=176; matching_runs for batch=2; notification_logs: SENT 58; matches referencing users of other batches: 0
+
+## recipients
+      recipient_email      | count 
+---------------------------+-------
+ test-inbox@localhost.test |   181
+(1 row)
+
+mailpit total 181 distinct recipients ['test-inbox@localhost.test']
+
+## auth
+n8n webhook without token: 403
+internal API without token: 401

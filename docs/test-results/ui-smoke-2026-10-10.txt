@@ -1,0 +1,12 @@
+# Headless Chrome (puppeteer, chrome-headless-shell 131) driving http://localhost:5173 - 2026-10-10T01:53:09Z
+# Steps: load page, select sample-data/invalid_header.csv (expect client-side block), select sample-data/users_with_errors.csv, click Upload, poll until notifications COMPLETED.
+# 'matching:' below is a regex artifact (matches the intro sentence); see the screenshot for the real badges.
+columns listed: true
+template button: true
+client-side header check: true | upload disabled: true
+batch id shown: 15794d03-a2d1-4f69-920b-53e196a18174
+import status: COMPLETED_WITH_ERRORS | matching: against | notifications: COMPLETED
+rejected rows table: true | pipeline stats: true
+progress bar width: 100%
+console errors: none
+# Screenshot: ui-smoke-2026-10-10.png. Emails went to the local Mailpit catcher only.

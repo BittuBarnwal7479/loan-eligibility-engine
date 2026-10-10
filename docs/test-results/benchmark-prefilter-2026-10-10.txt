@@ -1,0 +1,14 @@
+# docker compose exec -e N8N_MATCHING_WEBHOOK_URL= api python -m scripts.benchmark_prefilter --users 10000 --seed 42
+# 2026-10-10T00:58:50Z; active products = 5 synthetic dev fixtures + 3 crawled (ICICI, Axis, Kotak) at the time of the run
+import: COMPLETED in 2.29s
+users considered                10,000
+active products                      8
+possible user-product pairs     80,000
+SQL candidates                  22,285  (27.9% of pairs)
+eliminated by SQL               57,715  (72.1%)
+rejected deterministically           0
+ELIGIBLE matches                 2,833
+POTENTIAL matches               19,452
+LLM invocations                      0
+matching time                   12.87s  (10 chunks)
+upload_batch_id db58bbcb-7ec9-4bf5-b1e2-9c68a5b8f4b5

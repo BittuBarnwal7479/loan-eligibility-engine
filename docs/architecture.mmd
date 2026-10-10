@@ -1,0 +1,46 @@
+flowchart LR
+    subgraph Browser
+        FE[React upload UI]
+    end
+
+    subgraph Backend["Backend (FastAPI on Lambda / uvicorn locally)"]
+        API[API: /api/uploads<br/>/internal/* token-protected]
+        PROC[CSV processor<br/>S3-triggered Lambda]
+    end
+
+    S3[(S3 upload bucket<br/>private, SSE, 7-day expiry)]
+    PG[(PostgreSQL / RDS<br/>upload_batches · users · loan_products<br/>matches · matching_runs · notification_logs)]
+
+    subgraph n8n["n8n (self-hosted)"]
+        A[Workflow A<br/>loan discovery<br/>weekly + manual]
+        B[Workflow B<br/>multi-stage matching]
+        C[Workflow C<br/>notifications]
+    end
+
+    SITES[[Public lender pages<br/>ICICI · Axis · Kotak]]
+    LLM[[Optional LLM<br/>off by default]]
+    MAIL[[AWS SES<br/>or local Mailpit]]
+    INBOX[(Test inbox only)]
+
+    FE -- 1. POST /api/uploads --> API
+    API -- 2. create batch PENDING<br/>presigned POST --> FE
+    FE -- 3. upload CSV directly --> S3
+    S3 -- 4. ObjectCreated event --> PROC
+    PROC -- 5. validate + upsert in one tx<br/>status COMPLETED --> PG
+    PROC -- 6. X-Webhook-Token --> B
+    FE -. poll status .-> API
+
+    A -- robots.txt + page fetch --> SITES
+    A -- /internal/products/ingest --> API
+    API -- extract, validate, upsert --> PG
+
+    B -- validate batch --> API
+    B -- stage 0 normalize criteria --> API
+    API -. per product, evidence-checked .-> LLM
+    B -- stages 1-3: SQL pre-filter,<br/>deterministic eval, persist --> API
+    B -- X-Webhook-Token --> C
+
+    C -- prepare grouped outbox --> API
+    C -- send 1 email per user --> MAIL
+    MAIL --> INBOX
+    C -- record SENT/FAILED/DRY_RUN --> API

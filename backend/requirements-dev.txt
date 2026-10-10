@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest==8.3.5
+boto3==1.38.13
+moto[s3]==5.1.4
+ruff==0.11.9

@@ -1,0 +1,78 @@
+{
+  "_warning": "SYNTHETIC DEVELOPMENT FIXTURES. These are NOT real loan products, lenders, rates or criteria. They exist only to exercise the matching pipeline locally. data_origin is stored as 'dev_fixture' and emails label them as test data.",
+  "products": [
+    {
+      "lender_name": "DEV FIXTURE Lender A",
+      "product_name": "Fixture Salaried Personal Loan",
+      "source_url": "https://fixtures.invalid/lender-a/salaried-personal-loan",
+      "source_attribution": "Synthetic development fixture (not a real product)",
+      "interest_rate_min": 10.5,
+      "interest_rate_max": 18.0,
+      "interest_rate_text": "10.5% - 18% p.a. (synthetic)",
+      "min_monthly_income": 25000,
+      "min_credit_score": 700,
+      "min_age": 21,
+      "max_age": 60,
+      "employment_types": ["salaried"]
+    },
+    {
+      "lender_name": "DEV FIXTURE Lender A",
+      "product_name": "Fixture Self-Employed Business Loan",
+      "source_url": "https://fixtures.invalid/lender-a/self-employed-loan",
+      "source_attribution": "Synthetic development fixture (not a real product)",
+      "interest_rate_min": 14.0,
+      "interest_rate_max": 22.0,
+      "interest_rate_text": "14% - 22% p.a. (synthetic)",
+      "min_monthly_income": 40000,
+      "min_credit_score": 720,
+      "min_age": 25,
+      "max_age": 65,
+      "employment_types": ["self_employed"]
+    },
+    {
+      "lender_name": "DEV FIXTURE Lender B",
+      "product_name": "Fixture Premium Loan",
+      "source_url": "https://fixtures.invalid/lender-b/premium-loan",
+      "source_attribution": "Synthetic development fixture (not a real product)",
+      "interest_rate_min": 9.5,
+      "interest_rate_max": 13.0,
+      "interest_rate_text": "9.5% - 13% p.a. (synthetic)",
+      "min_monthly_income": 100000,
+      "min_credit_score": 780,
+      "min_age": 25,
+      "max_age": 58,
+      "employment_types": ["salaried", "self_employed"]
+    },
+    {
+      "lender_name": "DEV FIXTURE Lender B",
+      "product_name": "Fixture Starter Loan (partially unknown criteria)",
+      "source_url": "https://fixtures.invalid/lender-b/starter-loan",
+      "source_attribution": "Synthetic development fixture (not a real product)",
+      "interest_rate_min": 16.0,
+      "interest_rate_max": null,
+      "interest_rate_text": "from 16% p.a. (synthetic)",
+      "min_monthly_income": 15000,
+      "min_credit_score": null,
+      "min_age": 21,
+      "max_age": null,
+      "employment_types": null,
+      "employment_criteria_text": "Employees of private limited companies, public sector undertakings and government bodies",
+      "other_criteria": ["Minimum 1 year with current employer (as published, synthetic)"]
+    },
+    {
+      "lender_name": "DEV FIXTURE Lender C",
+      "product_name": "Fixture Senior Citizen Loan",
+      "source_url": "https://fixtures.invalid/lender-c/senior-loan",
+      "source_attribution": "Synthetic development fixture (not a real product)",
+      "interest_rate_min": 11.0,
+      "interest_rate_max": 15.5,
+      "interest_rate_text": "11% - 15.5% p.a. (synthetic)",
+      "min_monthly_income": 20000,
+      "min_credit_score": 650,
+      "max_credit_score": null,
+      "min_age": 55,
+      "max_age": 75,
+      "employment_types": ["retired", "salaried"]
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+# Local end-to-end run, 2026-10-10T00:56:43Z. Stack: docker compose (local storage mode, NOTIFICATION_MODE=smtp -> Mailpit).
+
+## python scripts/e2e_local.py sample-data/users_sample.csv
+batch 4427a2b5-7c29-4235-8795-9acb28aa006a created (storage_mode=local)
+upload -> HTTP 204
+{
+  "status": "COMPLETED",
+  "total_rows": 60,
+  "processed_rows": 60,
+  "failed_rows": 0,
+  "matching_status": "COMPLETED",
+  "notification_status": "COMPLETED"
+}
+matching: {
+  "status": "COMPLETED",
+  "users_considered": 60,
+  "active_products": 8,
+  "total_possible_pairs": 480,
+  "sql_candidate_pairs": 156,
+  "sql_eliminated_pairs": 324,
+  "deterministic_rejections": 0,
+  "eligible_matches": 20,
+  "potential_matches": 136,
+  "llm_invocations": 0,
+  "chunks_processed": 1,
+  "matching_run_id": "e321c02c-71ab-489c-8fdd-9ed356aacc68",
+  "finished_at": "2026-10-10T00:56:51.129210+00:00"
+}
+notifications: {'SENT': 58}
+mailpit: 58 new message(s); recipients: ['test-inbox@localhost.test']
+exit=0
+
+## python scripts/e2e_local.py sample-data/users_with_errors.csv
+batch 169c6d8c-e66e-44f3-91ff-004929f49264 created (storage_mode=local)
+upload -> HTTP 204
+{
+  "status": "COMPLETED_WITH_ERRORS",
+  "total_rows": 12,
+  "processed_rows": 5,
+  "failed_rows": 7,
+  "matching_status": "COMPLETED",
+  "notification_status": "COMPLETED"
+}
+matching: {
+  "status": "COMPLETED",
+  "users_considered": 5,
+  "active_products": 8,
+  "total_possible_pairs": 40,
+  "sql_candidate_pairs": 11,
+  "sql_eliminated_pairs": 29,
+  "deterministic_rejections": 0,
+  "eligible_matches": 1,
+  "potential_matches": 10,
+  "llm_invocations": 0,
+  "chunks_processed": 1,
+  "matching_run_id": "afa1564f-8fbc-4f17-9ddf-13a95d853439",
+  "finished_at": "2026-10-10T00:58:12.916957+00:00"
+}
+notifications: {'SENT': 5}
+mailpit: 5 new message(s); recipients: ['test-inbox@localhost.test']
+exit=0
+
+## python scripts/e2e_local.py sample-data/invalid_header.csv
+batch 76ec9807-02a7-4aa6-9435-69f4f630ef10 created (storage_mode=local)
+upload -> HTTP 204
+{
+  "status": "FAILED",
+  "total_rows": 0,
+  "processed_rows": 0,
+  "failed_rows": 0,
+  "matching_status": "NOT_STARTED",
+  "notification_status": "NOT_STARTED"
+}
+matching: null
+notifications: {}
+mailpit: 0 new message(s); recipients: []
+exit=0

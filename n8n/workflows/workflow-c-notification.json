@@ -1,0 +1,658 @@
+{
+  "id": "LoanEngWorkflowC",
+  "name": "C - Match Notifications",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow C - notifications\nTriggered by Workflow B only after matching COMPLETED.\n\nThe backend groups matches into **one email per user**, creates notification_logs rows keyed by an idempotency key and returns only rows still to send, so retries never resend.\n\nEvery message goes to **NOTIFICATION_TEST_RECIPIENT** - never to CSV addresses.\n\nDelivery mode comes from the backend (NOTIFICATION_MODE):\n- dry_run: nothing sent, logged as DRY_RUN\n- smtp: local Mailpit catcher\n- ses: AWS SES\n\nEach outcome (SENT / FAILED + error) is reported back. Failed rows are not retried automatically: they are re-sent (max 3 attempts) the next time this workflow runs for the batch, e.g. after POST /internal/batches/{id}/trigger-matching.",
+        "width": 560,
+        "height": 360
+      },
+      "id": "dc4517f5-371c-590a-bdba-106fa08b1ce5",
+      "name": "About",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "loan-notify",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "8d6af970-b680-561b-bb14-e36f23342253",
+      "name": "Matching completed webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "LoanEngWebhook01",
+          "name": "Loan Engine Webhook Token (X-Webhook-Token)"
+        }
+      },
+      "webhookId": "5c9289b2-a93a-5b69-9d38-c70c7515748e"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Accept only a UUID batch id from the webhook body; reject anything else.\nconst body = $json.body || {};\nconst id = String(body.upload_batch_id || '');\nif (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {\n  throw new Error('upload_batch_id missing or not a UUID');\n}\nreturn [{ json: { upload_batch_id: id, received_at: new Date().toISOString() } }];"
+      },
+      "id": "e1e429be-89a8-5f6e-b5c1-463fa216295d",
+      "name": "Validate payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.LOAN_API_BASE_URL || 'http://api:8000') + '/internal/notifications/' + $json.upload_batch_id + '/prepare' }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "17e8f921-a7e8-5c9a-abf6-157c2ed91000",
+      "name": "Prepare grouped outbox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "LoanEngInternal1",
+          "name": "Loan Engine Internal API (X-Internal-Token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = $json.messages || [];\nreturn out.map(m => ({ json: m }));"
+      },
+      "id": "76354cf3-5ba7-5cdd-8be9-4aa2cefcc2ac",
+      "name": "One item per message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "546f2186-78f6-5b59-b25a-66274ec42477",
+      "name": "Send one at a time",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "19b4f827-a759-5477-8a76-3887528c0952",
+              "leftValue": "={{ $json.delivery_mode }}",
+              "rightValue": "dry_run",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "32f44f1f-5e57-592d-b92f-9a61535dd7d6",
+      "name": "Dry run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "19b4f827-a759-5477-8a76-3887528c0952",
+              "leftValue": "={{ $json.delivery_mode }}",
+              "rightValue": "ses",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "71f1e6ae-0b7b-53e4-abf1-a2ab3c21c5c4",
+      "name": "SES mode?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.LOAN_API_BASE_URL || 'http://api:8000') + '/internal/notifications/results/' + $json.notification_id }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'DRY_RUN' }) }}"
+      },
+      "id": "47babad6-8b8f-5b30-b4bf-9a54594f0631",
+      "name": "Record DRY_RUN",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "LoanEngInternal1",
+          "name": "Loan Engine Internal API (X-Internal-Token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "resource": "email",
+        "operation": "send",
+        "isBodyHtml": true,
+        "subject": "={{ $json.subject }}",
+        "body": "={{ $json.html }}",
+        "fromEmail": "={{ $json.from }}",
+        "toAddresses": [
+          "={{ $json.to }}"
+        ],
+        "additionalFields": {}
+      },
+      "id": "b76abf7c-7f76-5650-8198-2c67bb214f96",
+      "name": "Send via AWS SES",
+      "type": "n8n-nodes-base.awsSes",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        160
+      ],
+      "credentials": {
+        "aws": {
+          "id": "LoanEngAwsSes001",
+          "name": "AWS SES sender (least-privilege IAM user)"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.from }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "both",
+        "text": "={{ $json.text }}",
+        "html": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "c3a128f9-59d0-5f4b-8123-ab0d56d925f5",
+      "name": "Send via SMTP (Mailpit)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1540,
+        360
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "LoanEngMailpit01",
+          "name": "Local Mailpit SMTP"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.LOAN_API_BASE_URL || 'http://api:8000') + '/internal/notifications/results/' + $('Send one at a time').item.json.notification_id }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'SENT', provider_message_id: String($json.messageId || $json.MessageId || '').slice(0, 250) || null }) }}"
+      },
+      "id": "31d7aba4-60a4-5adc-8376-c9eb04af5aea",
+      "name": "Record SES SENT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1780,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "LoanEngInternal1",
+          "name": "Loan Engine Internal API (X-Internal-Token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.LOAN_API_BASE_URL || 'http://api:8000') + '/internal/notifications/results/' + $('Send one at a time').item.json.notification_id }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'FAILED', error: String(($json.error && ($json.error.message || $json.error)) || 'send failed').slice(0, 500) }) }}"
+      },
+      "id": "b167a2c7-1576-5570-be9b-826030e2060b",
+      "name": "Record SES FAILED",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1780,
+        220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "LoanEngInternal1",
+          "name": "Loan Engine Internal API (X-Internal-Token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.LOAN_API_BASE_URL || 'http://api:8000') + '/internal/notifications/results/' + $('Send one at a time').item.json.notification_id }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'SENT', provider_message_id: String($json.messageId || $json.MessageId || '').slice(0, 250) || null }) }}"
+      },
+      "id": "1d3ef9a5-c3b5-5a06-9793-7f7aa4a853bd",
+      "name": "Record SMTP SENT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1780,
+        340
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "LoanEngInternal1",
+          "name": "Loan Engine Internal API (X-Internal-Token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.LOAN_API_BASE_URL || 'http://api:8000') + '/internal/notifications/results/' + $('Send one at a time').item.json.notification_id }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'FAILED', error: String(($json.error && ($json.error.message || $json.error)) || 'send failed').slice(0, 500) }) }}"
+      },
+      "id": "ad3873f7-9543-50d8-808e-07d115531183",
+      "name": "Record SMTP FAILED",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1780,
+        460
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "LoanEngInternal1",
+          "name": "Loan Engine Internal API (X-Internal-Token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "seconds"
+      },
+      "id": "cb171853-c80e-5b90-b507-d0b53fc413d4",
+      "name": "Throttle (SES sandbox: 1 msg/s)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2020,
+        200
+      ],
+      "webhookId": "8051b2fc-2046-5b4a-8a33-d2d4cbd6c69f"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.LOAN_API_BASE_URL || 'http://api:8000') + '/internal/notifications/' + $('Validate payload').first().json.upload_batch_id + '/finalize' }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "3b62398a-859d-5b9d-8b79-3d8a57302eb1",
+      "name": "Finalize batch notification status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        -160
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "LoanEngInternal1",
+          "name": "Loan Engine Internal API (X-Internal-Token)"
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "Matching completed webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate payload": {
+      "main": [
+        [
+          {
+            "node": "Prepare grouped outbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare grouped outbox": {
+      "main": [
+        [
+          {
+            "node": "One item per message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One item per message": {
+      "main": [
+        [
+          {
+            "node": "Send one at a time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send one at a time": {
+      "main": [
+        [
+          {
+            "node": "Finalize batch notification status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dry run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dry run?": {
+      "main": [
+        [
+          {
+            "node": "Record DRY_RUN",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SES mode?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SES mode?": {
+      "main": [
+        [
+          {
+            "node": "Send via AWS SES",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send via SMTP (Mailpit)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send via AWS SES": {
+      "main": [
+        [
+          {
+            "node": "Record SES SENT",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record SES FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send via SMTP (Mailpit)": {
+      "main": [
+        [
+          {
+            "node": "Record SMTP SENT",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record SMTP FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record DRY_RUN": {
+      "main": [
+        [
+          {
+            "node": "Throttle (SES sandbox: 1 msg/s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record SES SENT": {
+      "main": [
+        [
+          {
+            "node": "Throttle (SES sandbox: 1 msg/s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record SES FAILED": {
+      "main": [
+        [
+          {
+            "node": "Throttle (SES sandbox: 1 msg/s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record SMTP SENT": {
+      "main": [
+        [
+          {
+            "node": "Throttle (SES sandbox: 1 msg/s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record SMTP FAILED": {
+      "main": [
+        [
+          {
+            "node": "Throttle (SES sandbox: 1 msg/s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Throttle (SES sandbox: 1 msg/s)": {
+      "main": [
+        [
+          {
+            "node": "Send one at a time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "Asia/Kolkata"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "loan-engine"
+    },
+    {
+      "name": "notifications"
+    }
+  ]
+}

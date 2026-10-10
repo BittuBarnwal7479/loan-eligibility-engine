@@ -1,0 +1,528 @@
+{
+  "id": "LoanEngWorkflowA",
+  "name": "A - Loan Product Discovery",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Workflow A - loan product discovery\nRuns weekly (Mon 06:00) or on demand via **Run manually**.\n\nFor each configured public lender page: check robots.txt, fetch the page politely (fixed User-Agent, timeout, delay between sources), then the backend extracts facts deterministically, validates them and upserts by (lender, product).\n\nA failed fetch or a changed layout never deletes data: it is counted and products unverified for 7 days are flagged stale (30 days -> inactive).\n\nNo LLM is used here. Sources live in backend/config/loan_sources.json.",
+        "width": 520,
+        "height": 300
+      },
+      "id": "4d38e6d5-0b00-59f0-b3c1-5b961edd92c5",
+      "name": "About",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -320
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "fe74859b-f909-5ccd-bde9-75a1ba1734c9",
+      "name": "Run manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      },
+      "id": "f8c4565a-5cc2-52a3-a1c1-d12794ffa8f8",
+      "name": "Weekly schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ ($env.LOAN_API_BASE_URL || 'http://api:8000') + '/internal/products/sources' }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "4f34c7a0-27fe-5b2b-a34a-54d2188adfc4",
+      "name": "Get configured sources",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        80
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "LoanEngInternal1",
+          "name": "Loan Engine Internal API (X-Internal-Token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.first().json;\nreturn (cfg.sources || []).map(s => ({ json: { ...s, user_agent: cfg.user_agent, delay_seconds: cfg.min_delay_seconds || 5 } }));"
+      },
+      "id": "15517d80-f92c-5154-a03c-09b11bfb00c9",
+      "name": "One item per source",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "d84b03c7-2c81-5c3b-93eb-c79c37cd5ded",
+      "name": "Loop over sources",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        680,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.robots_url }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "={{ $json.user_agent }}"
+            }
+          ]
+        }
+      },
+      "id": "5d7dbba6-4ceb-566c-b63f-379361b7fab3",
+      "name": "Fetch robots.txt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        180
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.LOAN_API_BASE_URL || 'http://api:8000') + '/internal/products/robots-check' }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ source_key: $('Loop over sources').item.json.source_key, status_code: $json.statusCode ?? null, robots_txt: (typeof ($json.data ?? $json.body) === 'string' ? ($json.data ?? $json.body) : null) }) }}"
+      },
+      "id": "943a51d7-a547-574d-af9f-0fc754002e8a",
+      "name": "Evaluate robots.txt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        180
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "LoanEngInternal1",
+          "name": "Loan Engine Internal API (X-Internal-Token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f376cfaa-d672-5cac-a6a4-6e65f2be472e",
+              "leftValue": "={{ $json.allowed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6a71a00a-91f9-5984-8b6a-99395f700ed9",
+      "name": "Allowed by robots.txt?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1340,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Loop over sources').item.json.url }}",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "={{ $('Loop over sources').item.json.user_agent }}"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html"
+            }
+          ]
+        }
+      },
+      "id": "077d8473-1114-565c-b05e-1e7786066aa3",
+      "name": "Fetch product page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.LOAN_API_BASE_URL || 'http://api:8000') + '/internal/products/ingest' }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ source_key: $('Loop over sources').item.json.source_key, status_code: $json.statusCode ?? null, html: (typeof ($json.data ?? $json.body) === 'string' ? ($json.data ?? $json.body) : null), error: $json.error ? String($json.error.message || 'request failed').slice(0, 400) : null }) }}"
+      },
+      "id": "14f2549d-d133-56ce-a58d-1df8eac9f449",
+      "name": "Extract, validate and upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1780,
+        80
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "LoanEngInternal1",
+          "name": "Loan Engine Internal API (X-Internal-Token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { source_key: $('Loop over sources').item.json.source_key, stored: false, reason: 'skipped: ' + ($json.reason || 'disallowed by robots.txt') } }];"
+      },
+      "id": "72ef4764-dc7f-5291-bb72-1dc2231a0f11",
+      "name": "Record robots skip",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('Loop over sources').item.json.delay_seconds }}",
+        "unit": "seconds"
+      },
+      "id": "616f2b5c-f049-5ba5-9579-869759a527a8",
+      "name": "Polite delay",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        180
+      ],
+      "webhookId": "310f3ef0-cfe7-501f-bdfd-c0e9a58e28b8"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.LOAN_API_BASE_URL || 'http://api:8000') + '/internal/products/refresh-staleness' }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "1b7b4fe7-4e4e-5ae5-a923-ffb0fed398ee",
+      "name": "Flag stale products",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        -100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "LoanEngInternal1",
+          "name": "Loan Engine Internal API (X-Internal-Token)"
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// The loop's 'done' output (index 0) carries every per-source result.\nconst results = $('Loop over sources').all(0).map(i => i.json);\nreturn [{ json: { finished_at: new Date().toISOString(), staleness: $json,\n  stored: results.filter(r => r.stored).map(r => r.source_key),\n  not_stored: results.filter(r => !r.stored).map(r => ({ source_key: r.source_key, reason: r.reason })) } }];"
+      },
+      "id": "75aab120-abea-545e-bf62-2ee0ccc6d856",
+      "name": "Run summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -100
+      ]
+    }
+  ],
+  "connections": {
+    "Run manually": {
+      "main": [
+        [
+          {
+            "node": "Get configured sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly schedule": {
+      "main": [
+        [
+          {
+            "node": "Get configured sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get configured sources": {
+      "main": [
+        [
+          {
+            "node": "One item per source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One item per source": {
+      "main": [
+        [
+          {
+            "node": "Loop over sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop over sources": {
+      "main": [
+        [
+          {
+            "node": "Flag stale products",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch robots.txt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch robots.txt": {
+      "main": [
+        [
+          {
+            "node": "Evaluate robots.txt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate robots.txt": {
+      "main": [
+        [
+          {
+            "node": "Allowed by robots.txt?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed by robots.txt?": {
+      "main": [
+        [
+          {
+            "node": "Fetch product page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record robots skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch product page": {
+      "main": [
+        [
+          {
+            "node": "Extract, validate and upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract, validate and upsert": {
+      "main": [
+        [
+          {
+            "node": "Polite delay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record robots skip": {
+      "main": [
+        [
+          {
+            "node": "Polite delay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Polite delay": {
+      "main": [
+        [
+          {
+            "node": "Loop over sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag stale products": {
+      "main": [
+        [
+          {
+            "node": "Run summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "Asia/Kolkata"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "loan-engine"
+    },
+    {
+      "name": "discovery"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+# Workflow A (n8n) live run - 2026-10-10T00:56Z
+# Command: docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5690 -e N8N_PORT=5699 n8n n8n execute --id=LoanEngWorkflowA
+# n8n result: Execution was successful. Run summary node output:
+{
+ "finished_at": "2026-10-10T00:56:32.943Z",
+ "staleness": {
+  "flagged_stale": 0,
+  "deactivated": 0
+ },
+ "stored": [
+  "icici-personal-loan",
+  "axis-personal-loan",
+  "kotak-personal-loan"
+ ],
+ "not_stored": []
+}
+{"source_key": "icici-personal-loan", "stored": true, "extracted": {"interest_rate_min": "9.99", "interest_rate_max": null, "min_monthly_income": "30000", "min_credit_score": null, "min_age": 23, "max_age": 58, "employment_types": ["salaried", "self_employed"], "employment_criteria_text": null, "other_criteria": ["Work experience: 2 years (as published)", "Work experience: 3 years (as published)"]}}
+{"source_key": "axis-personal-loan", "stored": true, "extracted": {"interest_rate_min": "9.99", "interest_rate_max": null, "min_monthly_income": "25000", "min_credit_score": null, "min_age": 21, "max_age": 60, "employment_types": ["salaried"], "employment_criteria_text": null, "other_criteria": []}}
+{"source_key": "kotak-personal-loan", "stored": true, "extracted": {"interest_rate_min": "10.99", "interest_rate_max": null, "min_monthly_income": null, "min_credit_score": null, "min_age": null, "max_age": null, "employment_types": ["salaried"], "employment_criteria_text": null, "other_criteria": []}}
+
+# Resulting rows (psql):
+ id |     lender_name     | interest_rate_min | interest_rate_max | min_monthly_income | min_credit_score | min_age | max_age |     employment_types     |                                     other_criteria                                     |  last_verified_at   
+----+---------------------+-------------------+-------------------+--------------------+------------------+---------+---------+--------------------------+----------------------------------------------------------------------------------------+---------------------
+  6 | ICICI Bank          |              9.99 |                   |           30000.00 |                  |      23 |      58 | {salaried,self_employed} | ["Work experience: 2 years (as published)", "Work experience: 3 years (as published)"] | 2026-10-10 00:56:11
+  7 | Axis Bank           |              9.99 |                   |           25000.00 |                  |      21 |      60 | {salaried}               | []                                                                                     | 2026-10-10 00:56:19
+  8 | Kotak Mahindra Bank |             10.99 |                   |                    |                  |         |         | {salaried}               | []                                                                                     | 2026-10-10 00:56:28
+(3 rows)
+
+# Interpretation: values are what the deterministic extractor found on the public pages at that time.
+# NULL = not published on the crawled page or not extracted (treated as UNKNOWN, never as a pass).
+# They are not verified lender offers and may change; re-run Workflow A to refresh.

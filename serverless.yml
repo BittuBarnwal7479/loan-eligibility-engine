@@ -1,0 +1,277 @@
+# AWS deployment (NOT deployed by the author - see docs/AWS_DEPLOYMENT.md before running).
+#
+# Creates: private S3 upload bucket, HTTP API + API Lambda, S3-triggered CSV Lambda,
+# migration Lambda, RDS PostgreSQL (db.t4g.micro, private), security groups,
+# a free S3 gateway VPC endpoint, and a least-privilege SES send policy for n8n.
+# Does NOT create: VPC/subnets (uses existing, e.g. the default VPC), NAT gateways
+# (avoided on purpose), the n8n host, SES identities, or SSM parameters.
+#
+# Required SSM parameters (create once per stage, SecureString where noted):
+#   /loan-engine/<stage>/db-password            SecureString, URL-safe characters only
+#   /loan-engine/<stage>/internal-api-token     SecureString
+#   /loan-engine/<stage>/n8n-webhook-token      SecureString
+#   /loan-engine/<stage>/n8n-matching-webhook-url  String, e.g. http://10.0.1.25:5678/webhook/loan-matching
+#   /loan-engine/<stage>/notification-test-recipient String, an inbox you control (SES-verified while in sandbox)
+#
+# Deploy:  npx serverless@3 deploy --stage dev --param="vpcId=vpc-..." --param="subnetIds=subnet-a,subnet-b" \
+#            --param="routeTableIds=rtb-..." --param="frontendOrigin=http://localhost:5173" \
+#            --param="sesFromAddress=verified-sender@yourdomain" --param="n8nSecurityGroupId=sg-..."
+# Remove:  npx serverless@3 remove --stage dev   (empty the bucket first; see docs)
+
+service: loan-eligibility-engine
+frameworkVersion: "3"
+
+plugins:
+  - serverless-python-requirements
+
+params:
+  default:
+    frontendOrigin: http://localhost:5173
+    dbInstanceClass: db.t4g.micro
+    n8nSecurityGroupId: ""
+    sesFromAddress: ""
+
+custom:
+  stage: ${sls:stage}
+  bucketName: ${self:service}-uploads-${sls:stage}-${aws:accountId}
+  ssmPrefix: /loan-engine/${sls:stage}
+  pythonRequirements:
+    fileName: backend/requirements.txt
+    dockerizePip: non-linux       # psycopg binary wheels must be built for Amazon Linux
+    slim: true
+    noDeploy:
+      - boto3
+      - botocore
+
+provider:
+  name: aws
+  runtime: python3.12
+  architecture: x86_64
+  region: ${opt:region, 'ap-south-1'}
+  stage: ${opt:stage, 'dev'}
+  memorySize: 512
+  timeout: 29
+  logRetentionInDays: 14
+  tags:
+    project: loan-eligibility-engine
+    stage: ${sls:stage}
+  httpApi:
+    cors:
+      allowedOrigins:
+        - ${param:frontendOrigin}
+      allowedMethods: [GET, POST]
+      allowedHeaders: [Content-Type]
+      maxAge: 600
+  vpc:
+    securityGroupIds:
+      - !Ref LambdaSecurityGroup
+    subnetIds: !Split [",", "${param:subnetIds}"]
+  environment:
+    APP_ENV: ${sls:stage}
+    PYTHONPATH: /var/task/backend:/var/task
+    LOG_LEVEL: INFO
+    STORAGE_MODE: s3
+    UPLOAD_BUCKET: ${self:custom.bucketName}
+    UPLOAD_URL_TTL_SECONDS: "300"
+    MAX_UPLOAD_BYTES: "10485760"
+    # Resolved from SSM at deploy time; Lambda encrypts environment variables at rest with KMS.
+    DATABASE_URL: !Join
+      - ""
+      - - "postgresql://loan_engine:"
+        - ${ssm:${self:custom.ssmPrefix}/db-password}
+        - "@"
+        - !GetAtt Database.Endpoint.Address
+        - ":5432/loan_engine?sslmode=require"
+    INTERNAL_API_TOKEN: ${ssm:${self:custom.ssmPrefix}/internal-api-token}
+    N8N_WEBHOOK_TOKEN: ${ssm:${self:custom.ssmPrefix}/n8n-webhook-token}
+    N8N_MATCHING_WEBHOOK_URL: ${ssm:${self:custom.ssmPrefix}/n8n-matching-webhook-url}
+    CORS_ORIGINS: ${param:frontendOrigin}
+    NOTIFICATION_MODE: ses
+    NOTIFICATION_FROM_EMAIL: ${param:sesFromAddress}
+    # NOTIFICATION_TEST_RECIPIENT is required for ses mode; set it per stage:
+    NOTIFICATION_TEST_RECIPIENT: ${ssm:${self:custom.ssmPrefix}/notification-test-recipient}
+    LLM_ENABLED: "false"
+  s3:
+    uploads:
+      name: ${self:custom.bucketName}
+      ownershipControls:            # passed through to CloudFormation (v3 schema warns but supports it)
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      publicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      bucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      lifecycleConfiguration:
+        Rules:
+          - Id: expire-raw-uploads      # raw CSVs contain personal data; keep them briefly
+            Status: Enabled
+            Prefix: uploads/
+            ExpirationInDays: 7
+      corsConfiguration:
+        CorsRules:
+          - AllowedOrigins: ["${param:frontendOrigin}"]
+            AllowedMethods: [POST]
+            AllowedHeaders: ["*"]
+            MaxAge: 600
+  iam:
+    role:
+      statements:
+        # Read uploaded CSVs; PutObject is needed only so presigned POST policies signed by this role are valid.
+        - Effect: Allow
+          Action: [s3:GetObject, s3:PutObject]
+          Resource: arn:aws:s3:::${self:custom.bucketName}/uploads/*
+
+package:
+  individually: false
+  patterns:
+    - "!**"
+    - backend/app/**
+    - backend/handlers/**
+    - backend/migrations/**
+    - backend/config/**
+    - backend/seeds/**
+    - "!**/__pycache__/**"
+
+functions:
+  api:
+    handler: backend/handlers/api.handler
+    description: FastAPI app (public upload endpoints + token-protected /internal endpoints for n8n)
+    events:
+      - httpApi: { method: GET, path: "/health" }
+      - httpApi: { method: POST, path: "/api/uploads" }
+      - httpApi: { method: GET, path: "/api/uploads/{batchId}" }
+      - httpApi: { method: GET, path: "/api/csv-template" }
+      - httpApi: { method: ANY, path: "/internal/{proxy+}" }
+
+  processCsv:
+    handler: backend/handlers/process_csv.handler
+    description: S3 ObjectCreated -> validate CSV and import into PostgreSQL, then trigger n8n Workflow B
+    timeout: 300
+    memorySize: 1024
+    reservedConcurrency: 5          # caps simultaneous DB connections from imports
+    maximumRetryAttempts: 2
+    events:
+      - s3:
+          bucket: uploads           # defined under provider.s3 (no custom-resource Lambda needed)
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: uploads/
+            - suffix: .csv
+
+  migrate:
+    handler: backend/handlers/migrate.handler
+    description: Apply SQL migrations (invoke manually after deploy)
+    timeout: 120
+
+resources:
+  Conditions:
+    HasN8nSecurityGroup: !Not [!Equals ["${param:n8nSecurityGroupId}", ""]]
+    HasSesFromAddress: !Not [!Equals ["${param:sesFromAddress}", ""]]
+
+  Resources:
+    UploadBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref S3BucketUploads   # logical id generated for provider.s3.uploads
+        PolicyDocument:
+          Statement:
+            - Sid: DenyInsecureTransport
+              Effect: Deny
+              Principal: "*"
+              Action: s3:*
+              Resource:
+                - !GetAtt S3BucketUploads.Arn
+                - !Join ["", [!GetAtt S3BucketUploads.Arn, "/*"]]
+              Condition: { Bool: { aws:SecureTransport: "false" } }
+
+    S3GatewayEndpoint:              # free; lets VPC Lambdas reach S3 without a NAT gateway
+      Type: AWS::EC2::VPCEndpoint
+      Properties:
+        VpcId: ${param:vpcId}
+        ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+        VpcEndpointType: Gateway
+        RouteTableIds: !Split [",", "${param:routeTableIds}"]
+
+    LambdaSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Loan engine Lambdas (egress only)
+        VpcId: ${param:vpcId}
+
+    DatabaseSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Loan engine PostgreSQL - only reachable from the Lambda security group
+        VpcId: ${param:vpcId}
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 5432
+            ToPort: 5432
+            SourceSecurityGroupId: !Ref LambdaSecurityGroup
+
+    N8nWebhookIngressFromLambda:   # optional: lets Lambdas call n8n on its private IP
+      Type: AWS::EC2::SecurityGroupIngress
+      Condition: HasN8nSecurityGroup
+      Properties:
+        GroupId: ${param:n8nSecurityGroupId}
+        IpProtocol: tcp
+        FromPort: 5678
+        ToPort: 5678
+        SourceSecurityGroupId: !Ref LambdaSecurityGroup
+
+    DatabaseSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: Loan engine database subnets
+        SubnetIds: !Split [",", "${param:subnetIds}"]
+
+    Database:
+      Type: AWS::RDS::DBInstance
+      DeletionPolicy: Snapshot
+      UpdateReplacePolicy: Snapshot
+      Properties:
+        Engine: postgres
+        EngineVersion: "17.9"   # pin a supported minor; check `aws rds describe-db-engine-versions` before deploying
+        DBInstanceClass: ${param:dbInstanceClass}
+        AllocatedStorage: "20"
+        StorageType: gp3
+        StorageEncrypted: true
+        DBName: loan_engine
+        MasterUsername: loan_engine
+        MasterUserPassword: "{{resolve:ssm-secure:${self:custom.ssmPrefix}/db-password}}"
+        DBSubnetGroupName: !Ref DatabaseSubnetGroup
+        VPCSecurityGroups: [!Ref DatabaseSecurityGroup]
+        PubliclyAccessible: false
+        MultiAZ: false
+        BackupRetentionPeriod: 1
+        DeletionProtection: false
+        AutoMinorVersionUpgrade: true
+        EnablePerformanceInsights: false
+
+    # Attach this managed policy to the IAM user/role whose keys n8n uses for SES.
+    N8nSesSendPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Condition: HasSesFromAddress
+      Properties:
+        Description: Allow sending email via SES only from the configured sender address
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: [ses:SendEmail, ses:SendRawEmail]
+              Resource: "*"
+              Condition:
+                StringEquals:
+                  ses:FromAddress: ${param:sesFromAddress}
+
+  Outputs:
+    UploadBucketName:
+      Value: !Ref S3BucketUploads
+    DatabaseEndpoint:
+      Value: !GetAtt Database.Endpoint.Address
+    N8nSesSendPolicyArn:
+      Condition: HasSesFromAddress
+      Value: !Ref N8nSesSendPolicy

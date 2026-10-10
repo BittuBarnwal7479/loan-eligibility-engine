@@ -1,0 +1,31 @@
+# secrets
+.env
+.env.*
+!.env.example
+*.pem
+n8n/credentials/*.json
+!n8n/credentials/*.example.json
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# node / frontend
+node_modules/
+frontend/dist/
+frontend/coverage/
+
+# serverless
+.serverless/
+.requirements/
+.requirements.zip
+
+# local data
+data/
+*.log
+.DS_Store
+docs/test-results/*.tmp

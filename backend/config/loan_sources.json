@@ -1,0 +1,28 @@
+{
+  "_comment": "Public lender product pages crawled by n8n Workflow A. robots.txt allowed each path when checked on 2026-10-10 (and is re-checked on every run). Rates and criteria are NOT stored here; they are extracted from the live page on every run.",
+  "user_agent": "LoanEligibilityEngineBot/0.1 (+educational assignment; low-frequency crawl)",
+  "min_delay_seconds": 5,
+  "sources": [
+    {
+      "source_key": "icici-personal-loan",
+      "lender_name": "ICICI Bank",
+      "product_name": "ICICI Bank Personal Loan",
+      "url": "https://www.icicibank.com/personal-banking/loans/personal-loan",
+      "enabled": true
+    },
+    {
+      "source_key": "axis-personal-loan",
+      "lender_name": "Axis Bank",
+      "product_name": "Axis Bank Personal Loan",
+      "url": "https://www.axisbank.com/retail/loans/personal-loan",
+      "enabled": true
+    },
+    {
+      "source_key": "kotak-personal-loan",
+      "lender_name": "Kotak Mahindra Bank",
+      "product_name": "Kotak Mahindra Bank Personal Loan",
+      "url": "https://www.kotak.com/en/personal-banking/loans/personal-loan.html",
+      "enabled": true
+    }
+  ]
+}
