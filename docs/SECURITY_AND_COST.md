@@ -8,7 +8,7 @@
 | Internal API | `/internal/*` requires `X-Internal-Token`, compared in constant time | `app/api/main.py`, `app/security.py` |
 | Webhooks | n8n webhooks use Header Auth (`X-Webhook-Token`); requests without it get 403. The payload is a batch UUID only (validated as a UUID in n8n). | workflows B, C |
 | Uploads | Presigned POST: fixed key, 1 B–10 MB size range, SSE required, 5-minute expiry. The local mode uses an HMAC-signed, expiring URL that accepts exactly one file per batch (exclusive write; tested). Startup fails if any secret still has the `.env.example` placeholder `change-me` (tested). Only `.csv` is accepted. | `app/storage.py` |
-| S3 | All public access blocked, BucketOwnerEnforced, SSE-S3, TLS-only bucket policy, uploads expire after 7 days | `serverless.yml` |
+| S3 | All public access blocked, BucketOwnerEnforced, SSE-S3, TLS-only bucket policy, uploads expire after 7 days. The bucket already exists, so these are set in the S3 console | `docs/AWS_DEPLOYMENT.md` |
 | Database | Private RDS, SG allows only the Lambda SG, TLS required, encrypted storage. Every query is parameterized; the only dynamic SQL is generated placeholder lists. A test proves SQL metacharacters are stored literally. | `app/*`, `tests/test_ingestion_db.py` |
 | IAM | Lambda: `s3:GetObject`/`PutObject` on `uploads/*` only (+ standard logs/VPC). n8n SES: send-only, restricted to one `FromAddress`. | `serverless.yml` |
 | Network (local) | Every port bound to `127.0.0.1`; Mailpit SMTP is internal only | `docker-compose.yml` |
@@ -38,7 +38,7 @@
 
 | Resource | Bills when idle? | How to avoid |
 |---|---|---|
-| RDS instance | **Yes, hourly** | local mode; `aws rds stop-db-instance` (up to 7 days); `serverless remove` |
+| RDS instance | **Yes, hourly** | local mode; `aws rds stop-db-instance` (up to 7 days); delete it in the RDS console (it is not part of the stack, so `serverless remove` leaves it running) |
 | RDS final snapshot after removal | Yes (storage) | delete the snapshot |
 | n8n EC2 host | **Yes, hourly** while running (+ EBS) | stop or terminate; local n8n instead |
 | NAT gateway | Yes, hourly | not used by design |

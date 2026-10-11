@@ -1,22 +1,23 @@
 # AWS deployment (NOT deployed by the author - see docs/AWS_DEPLOYMENT.md before running).
 #
-# Creates: private S3 upload bucket, HTTP API + API Lambda, S3-triggered CSV Lambda,
-# migration Lambda, RDS PostgreSQL (db.t4g.micro, private), security groups,
-# a free S3 gateway VPC endpoint, and a least-privilege SES send policy for n8n.
-# Does NOT create: VPC/subnets (uses existing, e.g. the default VPC), NAT gateways
-# (avoided on purpose), the n8n host, SES identities, or SSM parameters.
+# Creates: HTTP API + API Lambda, S3-triggered CSV Lambda, migration Lambda, the
+# S3 -> Lambda invoke permission, and a least-privilege SES send policy for n8n.
+# Reuses (created in the console, NOT managed by this stack): VPC/subnets, the Lambda and
+# RDS security groups, the S3 gateway VPC endpoint, the RDS PostgreSQL instance and the
+# upload bucket. The bucket's event notification, CORS, lifecycle and TLS-only policy are
+# configured in the S3 console (docs/AWS_DEPLOYMENT.md). No NAT gateway, on purpose.
+# Does NOT create: the n8n host, SES identities, or SSM parameters.
 #
 # Required SSM parameters (create once per stage, SecureString where noted):
-#   /loan-engine/<stage>/db-password            SecureString, URL-safe characters only
+#   /loan-engine/<stage>/db-password            SecureString, password of dbUser; URL-safe characters only
 #   /loan-engine/<stage>/internal-api-token     SecureString
 #   /loan-engine/<stage>/n8n-webhook-token      SecureString
 #   /loan-engine/<stage>/n8n-matching-webhook-url  String, e.g. http://10.0.1.25:5678/webhook/loan-matching
 #   /loan-engine/<stage>/notification-test-recipient String, an inbox you control (SES-verified while in sandbox)
 #
-# Deploy:  npx serverless@3 deploy --stage dev --param="vpcId=vpc-..." --param="subnetIds=subnet-a,subnet-b" \
-#            --param="routeTableIds=rtb-..." --param="frontendOrigin=http://localhost:5173" \
+# Deploy:  npx serverless deploy --stage dev --param="frontendOrigin=http://localhost:5173" \
 #            --param="sesFromAddress=verified-sender@yourdomain" --param="n8nSecurityGroupId=sg-..."
-# Remove:  npx serverless@3 remove --stage dev   (empty the bucket first; see docs)
+# Remove:  npx serverless remove --stage dev   (leaves the reused bucket, RDS and security groups untouched)
 
 service: loan-eligibility-engine
 frameworkVersion: "3"
@@ -27,13 +28,19 @@ plugins:
 params:
   default:
     frontendOrigin: http://localhost:5173
-    dbInstanceClass: db.t4g.micro
     n8nSecurityGroupId: ""
     sesFromAddress: ""
+    # Existing resources in ap-southeast-2 (override with --param if they change).
+    subnetIds: subnet-0989f4a5aeb932e4c,subnet-0a1b2ca704aa0bf06  # 2a + 2b; their route table has the S3 gateway endpoint
+    lambdaSecurityGroupId: sg-0159bd3bd8ad94e18  # the RDS SG (sg-0ff40905231dc8c9a) allows 5432 from this group
+    uploadBucket: loan-eligibility-engine
+    dbHost: database-1.cr8qe4miqt96.ap-southeast-2.rds.amazonaws.com
+    dbUser: postgres   # RDS master username (RDS console -> Configuration)
+    dbName: postgres   # always exists on RDS PostgreSQL; migrations create their tables in its public schema
 
 custom:
   stage: ${sls:stage}
-  bucketName: ${self:service}-uploads-${sls:stage}-${aws:accountId}
+  bucketName: ${param:uploadBucket}
   ssmPrefix: /loan-engine/${sls:stage}
   pythonRequirements:
     fileName: backend/requirements.txt
@@ -47,7 +54,7 @@ provider:
   name: aws
   runtime: python3.12
   architecture: x86_64
-  region: ${opt:region, 'ap-southeast-2'}
+  region: 'ap-southeast-2'
   stage: ${opt:stage, 'dev'}
   memorySize: 512
   timeout: 29
@@ -64,7 +71,7 @@ provider:
       maxAge: 600
   vpc:
     securityGroupIds:
-      - !Ref LambdaSecurityGroup
+      - ${param:lambdaSecurityGroupId}
     subnetIds: !Split [",", "${param:subnetIds}"]
   environment:
     APP_ENV: ${sls:stage}
@@ -77,11 +84,9 @@ provider:
     # Resolved from SSM at deploy time; Lambda encrypts environment variables at rest with KMS.
     DATABASE_URL: !Join
       - ""
-      - - "postgresql://loan_engine:"
+      - - "postgresql://${param:dbUser}:"
         - ${ssm:${self:custom.ssmPrefix}/db-password}
-        - "@"
-        - !GetAtt Database.Endpoint.Address
-        - ":5432/loan_engine?sslmode=require"
+        - "@${param:dbHost}:5432/${param:dbName}?sslmode=require"
     INTERNAL_API_TOKEN: ${ssm:${self:custom.ssmPrefix}/internal-api-token}
     N8N_WEBHOOK_TOKEN: ${ssm:${self:custom.ssmPrefix}/n8n-webhook-token}
     N8N_MATCHING_WEBHOOK_URL: ${ssm:${self:custom.ssmPrefix}/n8n-matching-webhook-url}
@@ -91,31 +96,9 @@ provider:
     # NOTIFICATION_TEST_RECIPIENT is required for ses mode; set it per stage:
     NOTIFICATION_TEST_RECIPIENT: ${ssm:${self:custom.ssmPrefix}/notification-test-recipient}
     LLM_ENABLED: "false"
-  s3:
-    uploads:
-      name: ${self:custom.bucketName}
-      ownershipControls:            # passed through to CloudFormation (v3 schema warns but supports it)
-        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
-      publicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      bucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
-      lifecycleConfiguration:
-        Rules:
-          - Id: expire-raw-uploads      # raw CSVs contain personal data; keep them briefly
-            Status: Enabled
-            Prefix: uploads/
-            ExpirationInDays: 7
-      corsConfiguration:
-        CorsRules:
-          - AllowedOrigins: ["${param:frontendOrigin}"]
-            AllowedMethods: [POST]
-            AllowedHeaders: ["*"]
-            MaxAge: 600
+  # The upload bucket already exists and is not owned by this stack, so its public-access block,
+  # SSE-S3 default encryption, 7-day uploads/ lifecycle, CORS and TLS-only policy are set in the
+  # S3 console (docs/AWS_DEPLOYMENT.md) instead of here.
   iam:
     role:
       statements:
@@ -151,15 +134,11 @@ functions:
     description: S3 ObjectCreated -> validate CSV and import into PostgreSQL, then trigger n8n Workflow B
     timeout: 300
     memorySize: 1024
-    reservedConcurrency: 5          # caps simultaneous DB connections from imports
     maximumRetryAttempts: 2
-    events:
-      - s3:
-          bucket: uploads           # defined under provider.s3 (no custom-resource Lambda needed)
-          event: s3:ObjectCreated:*
-          rules:
-            - prefix: uploads/
-            - suffix: .csv
+    # No `s3` event: the bucket is not managed by this stack, and `existing: true` would deploy a
+    # Serverless custom-resource Lambda on the deprecated nodejs18.x runtime. Add the bucket's
+    # ObjectCreated notification (prefix uploads/, suffix .csv) in the S3 console;
+    # ProcessCsvS3InvokePermission below allows that bucket to invoke this function.
 
   migrate:
     handler: backend/handlers/migrate.handler
@@ -172,45 +151,14 @@ resources:
     HasSesFromAddress: !Not [!Equals ["${param:sesFromAddress}", ""]]
 
   Resources:
-    UploadBucketPolicy:
-      Type: AWS::S3::BucketPolicy
+    ProcessCsvS3InvokePermission:
+      Type: AWS::Lambda::Permission
       Properties:
-        Bucket: !Ref S3BucketUploads   # logical id generated for provider.s3.uploads
-        PolicyDocument:
-          Statement:
-            - Sid: DenyInsecureTransport
-              Effect: Deny
-              Principal: "*"
-              Action: s3:*
-              Resource:
-                - !GetAtt S3BucketUploads.Arn
-                - !Join ["", [!GetAtt S3BucketUploads.Arn, "/*"]]
-              Condition: { Bool: { aws:SecureTransport: "false" } }
-
-    S3GatewayEndpoint:              # free; lets VPC Lambdas reach S3 without a NAT gateway
-      Type: AWS::EC2::VPCEndpoint
-      Properties:
-        VpcId: ${param:vpcId}
-        ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
-        VpcEndpointType: Gateway
-        RouteTableIds: !Split [",", "${param:routeTableIds}"]
-
-    LambdaSecurityGroup:
-      Type: AWS::EC2::SecurityGroup
-      Properties:
-        GroupDescription: Loan engine Lambdas (egress only)
-        VpcId: ${param:vpcId}
-
-    DatabaseSecurityGroup:
-      Type: AWS::EC2::SecurityGroup
-      Properties:
-        GroupDescription: Loan engine PostgreSQL - only reachable from the Lambda security group
-        VpcId: ${param:vpcId}
-        SecurityGroupIngress:
-          - IpProtocol: tcp
-            FromPort: 5432
-            ToPort: 5432
-            SourceSecurityGroupId: !Ref LambdaSecurityGroup
+        FunctionName: !GetAtt ProcessCsvLambdaFunction.Arn
+        Action: lambda:InvokeFunction
+        Principal: s3.amazonaws.com
+        SourceArn: arn:aws:s3:::${self:custom.bucketName}
+        SourceAccount: !Ref AWS::AccountId
 
     N8nWebhookIngressFromLambda:   # optional: lets Lambdas call n8n on its private IP
       Type: AWS::EC2::SecurityGroupIngress
@@ -220,36 +168,7 @@ resources:
         IpProtocol: tcp
         FromPort: 5678
         ToPort: 5678
-        SourceSecurityGroupId: !Ref LambdaSecurityGroup
-
-    DatabaseSubnetGroup:
-      Type: AWS::RDS::DBSubnetGroup
-      Properties:
-        DBSubnetGroupDescription: Loan engine database subnets
-        SubnetIds: !Split [",", "${param:subnetIds}"]
-
-    Database:
-      Type: AWS::RDS::DBInstance
-      DeletionPolicy: Snapshot
-      UpdateReplacePolicy: Snapshot
-      Properties:
-        Engine: postgres
-        EngineVersion: "17.9"   # pin a supported minor; check `aws rds describe-db-engine-versions` before deploying
-        DBInstanceClass: ${param:dbInstanceClass}
-        AllocatedStorage: "20"
-        StorageType: gp3
-        StorageEncrypted: true
-        DBName: loan_engine
-        MasterUsername: loan_engine
-        MasterUserPassword: "{{resolve:ssm-secure:${self:custom.ssmPrefix}/db-password}}"
-        DBSubnetGroupName: !Ref DatabaseSubnetGroup
-        VPCSecurityGroups: [!Ref DatabaseSecurityGroup]
-        PubliclyAccessible: false
-        MultiAZ: false
-        BackupRetentionPeriod: 1
-        DeletionProtection: false
-        AutoMinorVersionUpgrade: true
-        EnablePerformanceInsights: false
+        SourceSecurityGroupId: ${param:lambdaSecurityGroupId}
 
     # Attach this managed policy to the IAM user/role whose keys n8n uses for SES.
     N8nSesSendPolicy:
@@ -269,9 +188,9 @@ resources:
 
   Outputs:
     UploadBucketName:
-      Value: !Ref S3BucketUploads
+      Value: ${self:custom.bucketName}
     DatabaseEndpoint:
-      Value: !GetAtt Database.Endpoint.Address
+      Value: ${param:dbHost}
     N8nSesSendPolicyArn:
       Condition: HasSesFromAddress
       Value: !Ref N8nSesSendPolicy

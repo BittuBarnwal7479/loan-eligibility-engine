@@ -1,0 +1,137 @@
+# Builds the Lambda deployment zip on Linux so compiled wheels (psycopg-binary, pydantic-core, ...)
+# target Lambda's python3.12 / x86_64 runtime. Packaging only: no AWS credentials, no deploy.
+#
+# serverless.yml resolves five ${ssm:...} values at package time, which needs AWS credentials.
+# This job packages a throwaway copy (serverless.ci-stub.yml, created on the runner, never
+# committed) where only those five lookups are replaced by dummy strings. The SSM values end up
+# only in the CloudFormation template, never in the zip, so the zip is the real artifact; the
+# stubbed template and state file are deleted before upload so they cannot be deployed.
+name: Lambda package (Linux x86_64)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - backend/**
+      - serverless.yml
+      - package.json
+      - package-lock.json
+      - .github/workflows/lambda-package.yml
+      - .github/scripts/verify_lambda_package.py
+
+permissions:
+  contents: read
+
+env:
+  SLS_TELEMETRY_DISABLED: "1"
+  SLS_NOTIFICATIONS_MODE: "off"
+  AWS_EC2_METADATA_DISABLED: "true"
+  PACKAGE_DIR: .ci-package
+  REPORT_DIR: .ci-package/reports
+
+defaults:
+  run:
+    shell: bash   # explicit bash adds -o pipefail, so `cmd | tee` fails when cmd fails
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"   # Serverless 3.39 supports Node >= 12; 20 is an active LTS
+          cache: npm
+
+      - name: Show toolchain
+        run: |
+          python3.12 --version   # the requirements plugin runs `python3.12` for runtime python3.12
+          node --version
+          uname -m
+
+      - name: Validate Python dependencies (lint + unit tests; DB tests skip without PostgreSQL)
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+          python -m pip check
+          python -m ruff check .
+          python -m ruff format --check .
+          python -m pytest -q
+
+      - name: Check wheel tags for the Lambda target (linux x86_64, cp312)
+        run: |
+          mkdir -p "$REPORT_DIR"
+          python -m pip download -r backend/requirements.txt -d wheels-check \
+            --only-binary=:all: --implementation cp --python-version 3.12 --abi cp312 --abi abi3 --abi none \
+            --platform manylinux2014_x86_64 --platform manylinux_2_17_x86_64 --platform manylinux_2_28_x86_64
+          ls wheels-check | sort | tee "$REPORT_DIR/wheel-tags.txt"
+          bad=$(ls wheels-check | grep -vE '(-none-any|-cp312-cp312-manylinux[^-]*x86_64|-abi3-manylinux[^-]*x86_64)\.whl$' || true)
+          if [ -n "$bad" ]; then echo "::error::wheels not built for linux x86_64 cp312:"; echo "$bad"; exit 1; fi
+
+      - name: Install Serverless and the python-requirements plugin
+        run: npm ci
+
+      - name: Create stubbed config (runner only, not committed)
+        run: |
+          python - <<'EOF'
+          import re
+          text = open("serverless.yml", encoding="utf-8").read()
+          if re.search(r"^\s*reservedConcurrency:", text, re.M):
+              raise SystemExit("reservedConcurrency must not be set (account concurrency quota is 5)")
+          stub, count = re.subn(r"\$\{ssm:\$\{self:custom\.ssmPrefix\}/([a-z0-9-]+)\}", r"ci-stub-not-a-secret-\1", text)
+          if count != 5 or "${ssm:" in stub:
+              raise SystemExit(f"expected exactly 5 SSM references, replaced {count}; update this step")
+          open("serverless.ci-stub.yml", "w", encoding="utf-8").write(stub)
+          print(f"replaced {count} SSM references")
+          EOF
+
+      - name: serverless package (python-requirements plugin builds on this Linux runner)
+        run: npx serverless package --config serverless.ci-stub.yml --stage dev --package "$PACKAGE_DIR"
+
+      - name: Drop stubbed CloudFormation output
+        run: |
+          rm -f serverless.ci-stub.yml "$PACKAGE_DIR"/cloudformation-template-*.json "$PACKAGE_DIR"/serverless-state.json
+          ls -la "$PACKAGE_DIR"
+
+      - name: Verify native extensions are ELF x86_64 / cpython-312 and layout is intact
+        run: python .github/scripts/verify_lambda_package.py "$PACKAGE_DIR/loan-eligibility-engine.zip" "$REPORT_DIR"
+
+      - name: Import handlers inside the AWS Lambda python3.12 image
+        run: |
+          mkdir -p task && unzip -q "$PACKAGE_DIR/loan-eligibility-engine.zip" -d task
+          # Dummy, non-secret settings: the API module reads settings at import time; nothing connects.
+          docker run --rm --platform linux/amd64 --entrypoint /var/lang/bin/python3.12 \
+            -v "$PWD/task:/var/task:ro" -w /var/task \
+            -e PYTHONPATH=/var/task/backend:/var/task \
+            -e APP_ENV=ci -e STORAGE_MODE=s3 -e UPLOAD_BUCKET=ci-bucket -e NOTIFICATION_MODE=dry_run \
+            -e DATABASE_URL="postgresql://ci:ci@127.0.0.1:5432/ci?sslmode=require" \
+            -e INTERNAL_API_TOKEN=ci-not-a-secret -e LLM_ENABLED=false \
+            public.ecr.aws/lambda/python:3.12 -c '
+          import importlib, platform, sys
+          import psycopg, pydantic_core
+          print("python", sys.version.split()[0], platform.machine(), platform.libc_ver())
+          print("psycopg", psycopg.__version__, "impl", psycopg.pq.__impl__)
+          print("pydantic_core", pydantic_core.__version__)
+          assert sys.version_info[:2] == (3, 12) and platform.machine() == "x86_64"
+          assert psycopg.pq.__impl__ == "binary", "psycopg binary implementation not loaded"
+          for module in ("backend.handlers.api", "backend.handlers.process_csv", "backend.handlers.migrate"):
+              assert callable(importlib.import_module(module).handler), module
+              print("ok", module + ".handler")
+          ' | tee "$REPORT_DIR/lambda-image-import.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lambda-package-linux-x86_64-py312-${{ github.sha }}
+          # Allowlist: only the zip and the verification reports (never stub config/templates).
+          path: |
+            ${{ env.PACKAGE_DIR }}/loan-eligibility-engine.zip
+            ${{ env.REPORT_DIR }}/*.txt
+          retention-days: 14
+          if-no-files-found: error
