@@ -63,6 +63,28 @@ def test_unknown_batch_and_bad_uuid(client):
     assert client.get("/api/uploads/not-a-uuid").status_code == 404
 
 
+def test_list_recent_uploads_newest_first(client):
+    first, _ = _upload(client)
+    second, _ = _upload(client)
+    response = client.get("/api/uploads", params={"limit": 2})
+    assert response.status_code == 200
+    uploads = response.json()["uploads"]
+    assert [u["upload_batch_id"] for u in uploads] == [second["upload_batch_id"], first["upload_batch_id"]]
+    latest = uploads[0]
+    assert (latest["status"], latest["total_rows"], latest["processed_rows"], latest["failed_rows"]) == (
+        "COMPLETED_WITH_ERRORS",
+        2,
+        1,
+        1,
+    )
+    assert latest["matching_status"] == "NOT_STARTED" and latest["notification_status"] == "NOT_STARTED"
+    assert latest["processing_completed_at"] is not None
+    assert "row_errors" not in latest
+    assert len(client.get("/api/uploads", params={"limit": 1}).json()["uploads"]) == 1
+    assert client.get("/api/uploads", params={"limit": 0}).status_code == 422
+    assert client.get("/api/uploads", params={"limit": 21}).status_code == 422
+
+
 def test_csv_template(client):
     response = client.get("/api/csv-template")
     assert response.status_code == 200
@@ -112,6 +134,33 @@ def test_internal_pipeline_over_http(client, db):
     assert final["notification_status"] == "COMPLETED"
     status = client.get(f"/api/uploads/{batch_id}").json()
     assert status["matching"]["eligible_matches"] == 1 and status["notifications"] == {"DRY_RUN": 1}
+
+
+def test_prepare_respects_notification_max_per_run(client, db, monkeypatch):
+    from app.config import get_settings
+
+    add_product(db, product_name="p", min_monthly_income=1000, min_credit_score=600, min_age=18, max_age=70)
+    csv = HEADER + "".join(f"U{i},u{i}@example.com,50000,720,salaried,30\n" for i in range(1, 4))
+    body, _ = _upload(client, csv)
+    batch_id = body["upload_batch_id"]
+    client.post(f"/internal/matching/{batch_id}/run", headers=TOKEN, json={"llm_invocations": 0})
+
+    monkeypatch.setenv("NOTIFICATION_MAX_PER_RUN", "1")
+    monkeypatch.setenv("NOTIFICATION_TEST_RECIPIENT", "tester@inbox.test")
+    get_settings.cache_clear()
+    try:
+        first = client.post(f"/internal/notifications/{batch_id}/prepare", headers=TOKEN).json()
+        assert len(first["messages"]) == 1
+        assert first["messages"][0]["to"] == "tester@inbox.test"
+        logs = db.execute("SELECT recipient_email, claimed_at FROM notification_logs").fetchall()
+        assert len(logs) == 3 and {r["recipient_email"] for r in logs} == {"tester@inbox.test"}
+        assert sum(r["claimed_at"] is not None for r in logs) == 1  # the other two wait for a later run
+
+        second = client.post(f"/internal/notifications/{batch_id}/prepare", headers=TOKEN).json()
+        assert len(second["messages"]) == 1
+        assert second["messages"][0]["notification_id"] != first["messages"][0]["notification_id"]
+    finally:
+        get_settings.cache_clear()
 
 
 def test_matching_rejects_unprocessed_batch(client):

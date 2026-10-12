@@ -125,6 +125,7 @@ functions:
     events:
       - httpApi: { method: GET, path: "/health" }
       - httpApi: { method: POST, path: "/api/uploads" }
+      - httpApi: { method: GET, path: "/api/uploads" }
       - httpApi: { method: GET, path: "/api/uploads/{batchId}" }
       - httpApi: { method: GET, path: "/api/csv-template" }
       - httpApi: { method: ANY, path: "/internal/{proxy+}" }

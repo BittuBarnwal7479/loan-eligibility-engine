@@ -105,6 +105,15 @@ def create_upload(body: CreateUploadRequest, settings: SettingsDep) -> dict[str,
     }
 
 
+@app.get("/api/uploads")
+def list_uploads(limit: Annotated[int, Query(ge=1, le=20)] = 5) -> dict[str, Any]:
+    """Most recent batches, newest first. Summary only; row errors come from GET /api/uploads/{id}."""
+    with connection() as conn:
+        rows = ingestion.list_recent_batches(conn, limit)
+    summaries = [ingestion.batch_summary(row) for row in rows]
+    return {"uploads": [{k: v for k, v in s.items() if k != "row_errors"} for s in summaries]}
+
+
 @app.get("/api/uploads/{batch_id}")
 def get_upload(batch_id: str) -> dict[str, Any]:
     bid = _uuid(batch_id)
@@ -261,7 +270,7 @@ def internal_prepare_notifications(batch_id: str, settings: SettingsDep) -> dict
     bid = _uuid(batch_id)
     try:
         with connection() as conn:
-            return notifications.prepare_outbox(settings, conn, bid)
+            return notifications.prepare_outbox(settings, conn, bid, limit=settings.notification_max_per_run)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except notifications.NotificationConfigError as exc:

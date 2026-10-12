@@ -32,3 +32,27 @@ def test_internal_endpoints_fail_closed_without_token(monkeypatch):
         assert not constant_time_equals("anything", get_settings().internal_api_token)
     finally:
         get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(("raw", "expected"), [(None, 200), ("1", 1), ("200", 200)])
+def test_notification_max_per_run_default_and_bounds(monkeypatch, raw, expected):
+    if raw is None:
+        monkeypatch.delenv("NOTIFICATION_MAX_PER_RUN", raising=False)
+    else:
+        monkeypatch.setenv("NOTIFICATION_MAX_PER_RUN", raw)
+    get_settings.cache_clear()
+    try:
+        assert get_settings().notification_max_per_run == expected
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "201"])
+def test_notification_max_per_run_out_of_range_is_rejected(monkeypatch, raw):
+    monkeypatch.setenv("NOTIFICATION_MAX_PER_RUN", raw)
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match="NOTIFICATION_MAX_PER_RUN"):
+            get_settings()
+    finally:
+        get_settings.cache_clear()
