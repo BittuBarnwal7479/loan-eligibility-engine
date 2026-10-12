@@ -5,13 +5,13 @@ import {
   getBatch,
   isImportDone,
   isTerminal,
-  matchingNotTriggered,
+  pollOutcome,
   uploadFile,
   type BatchStatus,
 } from "./api";
 import { COLUMN_HELP, REQUIRED_COLUMNS, checkFileBasics, checkHeaderLine, templateCsv } from "./csv";
 
-type Phase = "idle" | "uploading" | "tracking" | "error";
+type Phase = "idle" | "uploading" | "tracking" | "done" | "error";
 
 const POLL_MS = 2000;
 const POLL_LIMIT_MS = 10 * 60 * 1000;
@@ -64,18 +64,19 @@ export default function App() {
       .then((b) => {
         setBatch(b);
         setPollNote(null);
-        if (isTerminal(b)) return;
         const doneAt = isImportDone(b) ? (importDoneAt ?? Date.now()) : null;
-        if (matchingNotTriggered(b, doneAt, Date.now())) {
+        const outcome = pollOutcome(b, doneAt, started, Date.now(), POLL_LIMIT_MS);
+        if (outcome === "continue") {
+          timer.current = window.setTimeout(() => poll(id, started, doneAt), POLL_MS);
+          return;
+        }
+        setPhase("done");
+        if (outcome === "matching_not_triggered") {
           setMatchingSkipped(true);
           setPollNote("Import completed. Matching was not triggered in the current configuration.");
-          return;
-        }
-        if (Date.now() - started > POLL_LIMIT_MS) {
+        } else if (outcome === "timed_out") {
           setPollNote("Stopped polling after 10 minutes. Processing may still continue; refresh to check again.");
-          return;
         }
-        timer.current = window.setTimeout(() => poll(id, started, doneAt), POLL_MS);
       })
       .catch((e: Error) => {
         setPollNote(`Status check failed: ${e.message}. Retrying...`);

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { isImportDone, isTerminal, MATCHING_TRIGGER_GRACE_MS, matchingNotTriggered, type BatchStatus } from "./api";
+import {
+  isImportDone,
+  isTerminal,
+  MATCHING_TRIGGER_GRACE_MS,
+  matchingNotTriggered,
+  pollOutcome,
+  type BatchStatus,
+} from "./api";
 import { checkFileBasics, checkHeaderLine, normalizeHeader, templateCsv } from "./csv";
 
 describe("csv pre-checks", () => {
@@ -68,5 +75,25 @@ describe("matching not triggered (webhook disabled / dry-run)", () => {
       expect(isTerminal(b)).toBe(false);
     }
     expect(isTerminal({ ...done, matching_status: "COMPLETED", notification_status: "COMPLETED" })).toBe(true);
+  });
+});
+
+describe("poll outcome (UI leaves tracking state whenever polling stops)", () => {
+  const limit = 10 * 60 * 1000;
+  const t0 = 1_000_000;
+  const done = { status: "COMPLETED", matching_status: "NOT_STARTED", notification_status: "NOT_STARTED" } as BatchStatus;
+
+  it("dry-run: import done, matching NOT_STARTED past the grace period stops polling", () => {
+    expect(pollOutcome(done, t0, t0, t0 + MATCHING_TRIGGER_GRACE_MS, limit)).toBe("matching_not_triggered");
+  });
+
+  it("continues during the grace period and while matching runs", () => {
+    expect(pollOutcome(done, t0, t0, t0 + 1000, limit)).toBe("continue");
+    expect(pollOutcome({ ...done, matching_status: "RUNNING" }, t0, t0, t0 + MATCHING_TRIGGER_GRACE_MS, limit)).toBe("continue");
+  });
+
+  it("reports finished and timed-out as stop outcomes", () => {
+    expect(pollOutcome({ ...done, matching_status: "COMPLETED", notification_status: "COMPLETED" }, t0, t0, t0, limit)).toBe("finished");
+    expect(pollOutcome({ ...done, status: "PROCESSING" }, null, t0, t0 + limit + 1, limit)).toBe("timed_out");
   });
 });

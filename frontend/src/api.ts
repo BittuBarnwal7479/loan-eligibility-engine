@@ -120,3 +120,19 @@ export function matchingNotTriggered(b: BatchStatus, importDoneAt: number | null
     now - importDoneAt >= MATCHING_TRIGGER_GRACE_MS
   );
 }
+
+export type PollOutcome = "continue" | "finished" | "matching_not_triggered" | "timed_out";
+
+// Every outcome except "continue" means polling has stopped and the UI must leave its tracking state.
+export function pollOutcome(
+  b: BatchStatus,
+  importDoneAt: number | null,
+  started: number,
+  now: number,
+  limitMs: number,
+): PollOutcome {
+  if (isTerminal(b)) return "finished";
+  if (matchingNotTriggered(b, importDoneAt, now)) return "matching_not_triggered";
+  if (now - started > limitMs) return "timed_out";
+  return "continue";
+}
