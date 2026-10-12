@@ -1,5 +1,7 @@
 """HTTP-level tests through FastAPI's TestClient (local storage mode)."""
 
+from decimal import Decimal
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -158,6 +160,33 @@ def test_product_ingest_success_and_failure_paths(client, db):
     db.execute("UPDATE loan_products SET last_verified_at = now() - interval '40 days'")
     assert client.post("/internal/products/refresh-staleness", headers=TOKEN).json()["deactivated"] == 1
     assert db.execute("SELECT count(*) AS n FROM loan_products").fetchone()["n"] == 1  # never deleted
+
+
+def test_kotak_two_page_ingest_keeps_one_product(client, db):
+    from tests.test_extract import KOTAK_ELIGIBILITY_EXCERPT
+    from tests.test_product_sources import KOTAK_MAIN_EXCERPT
+
+    body = {
+        "source_key": "kotak-personal-loan",
+        "status_code": 200,
+        "html": KOTAK_MAIN_EXCERPT,
+        "criteria_status_code": 200,
+        "criteria_html": KOTAK_ELIGIBILITY_EXCERPT,
+    }
+    first = client.post("/internal/products/ingest", headers=TOKEN, json=body).json()
+    second = client.post("/internal/products/ingest", headers=TOKEN, json=body).json()
+    assert first["created"] and not second["created"] and first["product_id"] == second["product_id"]
+    failed = client.post(
+        "/internal/products/ingest", headers=TOKEN, json={**body, "criteria_status_code": 503, "criteria_html": None}
+    ).json()
+    assert failed["stored"] is False
+    rows = db.execute("SELECT * FROM loan_products WHERE lender_name = 'Kotak Mahindra Bank'").fetchall()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["interest_rate_min"] == Decimal("10.99") and row["min_monthly_income"] == Decimal("30000")
+    assert (row["min_age"], row["max_age"], row["min_credit_score"]) == (21, 60, None)
+    assert row["source_url"] == "https://www.kotak.bank.in/en/personal-banking/loans/personal-loan.html"
+    assert row["consecutive_crawl_failures"] == 1
 
 
 def test_unknown_source_rejected(client):

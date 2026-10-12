@@ -65,6 +65,23 @@ def test_discovery_has_schedule_manual_robots_and_no_llm():
     assert "anthropic" not in json.dumps(wf).lower() and "openai" not in json.dumps(wf).lower()
 
 
+def test_discovery_fetches_criteria_page_only_when_configured():
+    wf = load("workflow-a-loan-discovery.json")
+    nodes = {n["name"]: n for n in wf["nodes"]}
+    out = {src: [[e["node"] for e in b] for b in o["main"]] for src, o in wf["connections"].items()}
+    assert out["Fetch product page"] == [["Has criteria page?"]]
+    # true -> polite delay, criteria fetch, one combined ingest; false -> the original single-page ingest
+    assert out["Has criteria page?"] == [["Polite delay before criteria page"], ["Extract, validate and upsert"]]
+    assert out["Polite delay before criteria page"] == [["Fetch criteria page"]]
+    assert out["Fetch criteria page"] == [["Extract, validate and upsert (with criteria page)"]]
+    assert out["Extract, validate and upsert (with criteria page)"] == [["Polite delay"]]
+    assert "criteria_url" in nodes["Has criteria page?"]["parameters"]["conditions"]["conditions"][0]["leftValue"]
+    assert nodes["Fetch criteria page"]["parameters"]["url"] == "={{ $('Loop over sources').item.json.criteria_url }}"
+    combined = nodes["Extract, validate and upsert (with criteria page)"]["parameters"]["jsonBody"]
+    assert "criteria_html" in combined and "criteria_status_code" in combined and "criteria_error" in combined
+    assert "criteria" not in nodes["Extract, validate and upsert"]["parameters"]["jsonBody"]
+
+
 def test_matching_stages_in_order():
     wf = load("workflow-b-user-matching.json")
     order, node = [], "Upload completed webhook"

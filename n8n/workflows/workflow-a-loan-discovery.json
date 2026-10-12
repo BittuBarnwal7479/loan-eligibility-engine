@@ -277,6 +277,124 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0b9d4c7e-3a2f-5d61-8e4b-7c1a9f2d6e30",
+              "leftValue": "={{ $('Loop over sources').item.json.criteria_url || '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c3a1e5d2-7b4f-5e8a-9c1d-2f6b8a4e0d11",
+      "name": "Has criteria page?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1780,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('Loop over sources').item.json.delay_seconds }}",
+        "unit": "seconds"
+      },
+      "id": "5e2c8f1a-9d3b-5a47-b6e0-1f4c7d9a2b85",
+      "name": "Polite delay before criteria page",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        -220
+      ],
+      "webhookId": "a7f3c1e9-2b5d-5c48-9e6a-0d1f8b3c4a72"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Loop over sources').item.json.criteria_url }}",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "={{ $('Loop over sources').item.json.user_agent }}"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html"
+            }
+          ]
+        }
+      },
+      "id": "9f4b2d6c-1e8a-5f37-a2c5-6b0e3d7f1a94",
+      "name": "Fetch criteria page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        -220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.LOAN_API_BASE_URL || 'http://api:8000') + '/internal/products/ingest' }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ source_key: $('Loop over sources').item.json.source_key, status_code: $('Fetch product page').item.json.statusCode ?? null, html: (typeof ($('Fetch product page').item.json.data ?? $('Fetch product page').item.json.body) === 'string' ? ($('Fetch product page').item.json.data ?? $('Fetch product page').item.json.body) : null), error: $('Fetch product page').item.json.error ? String($('Fetch product page').item.json.error.message || 'request failed').slice(0, 400) : null, criteria_status_code: $json.statusCode ?? null, criteria_html: (typeof ($json.data ?? $json.body) === 'string' ? ($json.data ?? $json.body) : null), criteria_error: $json.error ? String($json.error.message || 'request failed').slice(0, 400) : null }) }}"
+      },
+      "id": "2d7e9a3f-6c1b-5b84-8f2d-4a9c0e6b3f57",
+      "name": "Extract, validate and upsert (with criteria page)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2440,
+        -220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "LoanEngInternal1",
+          "name": "Loan Engine Internal API (X-Internal-Token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
         "jsCode": "return [{ json: { source_key: $('Loop over sources').item.json.source_key, stored: false, reason: 'skipped: ' + ($json.reason || 'disallowed by robots.txt') } }];"
       },
       "id": "72ef4764-dc7f-5291-bb72-1dc2231a0f11",
@@ -453,7 +571,7 @@
       "main": [
         [
           {
-            "node": "Extract, validate and upsert",
+            "node": "Has criteria page?",
             "type": "main",
             "index": 0
           }
@@ -498,6 +616,57 @@
         [
           {
             "node": "Run summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has criteria page?": {
+      "main": [
+        [
+          {
+            "node": "Polite delay before criteria page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract, validate and upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Polite delay before criteria page": {
+      "main": [
+        [
+          {
+            "node": "Fetch criteria page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch criteria page": {
+      "main": [
+        [
+          {
+            "node": "Extract, validate and upsert (with criteria page)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract, validate and upsert (with criteria page)": {
+      "main": [
+        [
+          {
+            "node": "Polite delay",
             "type": "main",
             "index": 0
           }

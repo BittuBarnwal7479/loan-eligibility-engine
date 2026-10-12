@@ -6,6 +6,8 @@ they are not used as product data anywhere in the application.
 
 from decimal import Decimal
 
+import pytest
+
 from app.products.extract import extract_product, html_to_text, robots_allows
 from app.products.service import validate_extracted
 
@@ -21,6 +23,27 @@ AXIS_EXCERPT = (
     "<h2>Eligibility</h2><ul><li>Salaried employees of private limited companies</li>"
     "<li>Minimum age of 21 years</li><li>Maximum age of 60 years at the time of maturity of the Personal Loan</li>"
     "<li>Minimum net monthly income - ₹15,000 for Axis Bank customers and ₹25,000 for non Axis Bank customers</li></ul>"
+)
+# Kotak personal-loan eligibility page, captured 2026-10-12.
+KOTAK_ELIGIBILITY_EXCERPT = (
+    "<h2>Personal Loan Eligibility Criteria</h2><p>To qualify for a Personal Loan from Kotak Mahindra Bank, "
+    "salaried individuals must meet specific eligibility criteria, which include:</p>"
+    "<p>Nature of employment Employed with an MNC, public limited company, or private limited company</p>"
+    "<p>Age Individuals aged between 21 years and 60 years are eligible.</p>"
+    "<p>Age determines Personal Loan eligibility. You must be between 21 to 60 years of age.</p>"
+    "<p>Minimum monthly income ● For a Kotak Mahindra Bank Salary Account holder: Minimum net monthly income of "
+    "₹ 25,000 ● For a non Kotak Mahindra Bank Salary Account holder: Minimum net monthly income of ₹ 30,000 "
+    "● For Kotak Mahindra Bank Employees: Minimum net monthly income of ₹ 20,000</p>"
+    "<p>Work experience Applicants must possess at least one year of work experience.</p>"
+    "<p>CIBIL Score A CIBIL score of 750 or above is generally considered good for approving a Personal Loan.</p>"
+    "<p>Other factors impacting your eligibility include your occupation type and employer's history.</p>"
+    "<h3>How can I get a Personal Loan without a salary slip?</h3><p>Kotak Mahindra Bank requires minimal "
+    "documentation such as income proof, ID proof, and address proof. Salary slips are usually required for "
+    "salaried employees as proof of income, but if you are a non-salaried employee or self-employed, you can "
+    "provide an alternative proof of income such as Bank statements or taxation details.</p>"
+    "<h3>What is the eligibility for a Personal Loan?</h3><p>To qualify for a Personal Loan from Kotak Mahindra "
+    "Bank, you must meet the following criteria: Age: 21-80 years* Residency: India Employment: Working for an "
+    "MNC, private or a public limited company. Cibil Score: 685 or higher.</p>"
 )
 UNION_EXCERPT = (
     "<p>In case of default/delayed payment, penal interest should be recovered @2% p.a.</p>"
@@ -45,6 +68,61 @@ def test_axis_style_page_takes_higher_income_for_unknown_customer_relationship()
     assert p.min_monthly_income == Decimal("25000")
     assert (p.min_age, p.max_age) == (21, 60)
     assert p.employment_types == ["salaried"]
+
+
+def test_document_proof_faq_does_not_make_product_accept_self_employed():
+    p = extract_product(KOTAK_ELIGIBILITY_EXCERPT)
+    assert p.employment_types == ["salaried"]
+
+
+def test_self_employed_stated_in_eligibility_survives_document_sentence():
+    p = extract_product(
+        "<h2>Eligibility</h2><p>Self-employed individuals should be at least 23 years old.</p>"
+        "<p>Salaried and self-employed applicants must submit income proof such as bank statements.</p>"
+    )
+    assert p.employment_types == ["salaried", "self_employed"]
+
+
+def test_documentation_tab_label_does_not_hide_employment_criteria():
+    # Axis lists criteria without full stops, right after the "Documentation" tab label.
+    p = extract_product(
+        "<p>View More Eligibility Documentation Personal Loan eligibility Salaried Employees Salaried doctors "
+        "Employees of public and private limited companies Minimum age of 21 years</p>"
+    )
+    assert p.employment_types == ["salaried"]
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Applicants must possess at least one year of work experience.",
+        "A salaried person should have at least one year or more work experience.",
+        "An Employment period of at least one year is another requirement.",
+        "Work Experience: 1 year",
+    ],
+)
+def test_one_year_work_experience_variants(sentence):
+    p = extract_product(f"<p>{sentence}</p>")
+    assert p.other_criteria == ["Work experience: 1 year (as published)"]
+
+
+def test_work_experience_is_normalized_and_deduplicated():
+    p = extract_product(
+        "<p>Applicants must possess at least one year of work experience. A salaried person should have at least "
+        "one year or more work experience. An Employment period of at least 1 year is another requirement. "
+        "Work Experience: 3 years</p>"
+    )
+    assert p.other_criteria == ["Work experience: 1 year (as published)", "Work experience: 3 years (as published)"]
+
+
+def test_conflicting_score_and_age_wording_is_not_turned_into_hard_criteria():
+    p = extract_product(KOTAK_ELIGIBILITY_EXCERPT)
+    assert p.min_credit_score is None
+    assert any("not a stated minimum" in c and "750" in c for c in p.other_criteria)
+    assert not any("685" in c for c in p.other_criteria)
+    assert any("not applied" in n and "685" in n for n in p.notes)
+    assert (p.min_age, p.max_age) == (21, 60)  # FAQ "21-80 years*" does not widen the stated range
+    assert "Work experience: 1 year (as published)" in p.other_criteria
 
 
 def test_penal_rates_and_advisory_scores_are_not_treated_as_criteria():

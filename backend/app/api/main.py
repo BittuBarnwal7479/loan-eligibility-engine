@@ -330,7 +330,23 @@ def internal_robots_check(body: RobotsCheckRequest) -> dict[str, Any]:
             "reason": f"robots.txt unavailable ({body.status_code})",
         }
     allowed = product_extract.robots_allows(body.robots_txt, user_agent, source["url"])
+    criteria_url = source.get("criteria_url")
+    if allowed and criteria_url:
+        # Both pages make one product: if the criteria page may not be crawled, crawl neither.
+        reason = None
+        if _host(criteria_url) != _host(source["url"]):
+            reason = "criteria_url is on a different host; its robots.txt was not checked"
+        elif not product_extract.robots_allows(body.robots_txt, user_agent, criteria_url):
+            reason = "criteria page disallowed by robots.txt"
+        if reason:
+            with connection() as conn:
+                products.record_crawl_failure(conn, source, reason)
+            return {"source_key": body.source_key, "allowed": False, "reason": reason}
     return {"source_key": body.source_key, "allowed": allowed, "reason": "robots.txt evaluated"}
+
+
+def _host(url: str) -> str:
+    return url.split("/", 3)[2].lower()
 
 
 class IngestPageRequest(BaseModel):
@@ -338,6 +354,10 @@ class IngestPageRequest(BaseModel):
     status_code: int | None = None
     html: str | None = Field(default=None, max_length=5_000_000)
     error: str | None = Field(default=None, max_length=500)
+    # Only read for sources that configure a criteria_url (e.g. a separate eligibility page).
+    criteria_status_code: int | None = None
+    criteria_html: str | None = Field(default=None, max_length=5_000_000)
+    criteria_error: str | None = Field(default=None, max_length=500)
 
 
 @app.post("/internal/products/ingest", dependencies=[Internal])
@@ -352,10 +372,21 @@ def internal_ingest_page(body: IngestPageRequest) -> dict[str, Any]:
         failure = f"HTTP {body.status_code}"
     elif not body.html:
         failure = "empty response body"
+    html = body.html or ""
+    if failure is None and source.get("criteria_url"):
+        # Never upsert one page alone: the upsert would overwrite the other page's fields with NULL.
+        if body.criteria_error:
+            failure = f"criteria page: {body.criteria_error}"
+        elif body.criteria_status_code is None or not 200 <= body.criteria_status_code < 300:
+            failure = f"criteria page: HTTP {body.criteria_status_code}"
+        elif not body.criteria_html:
+            failure = "criteria page: empty response body"
+        else:
+            html = html + "\n" + body.criteria_html
 
     extracted = None
     if failure is None:
-        extracted = product_extract.extract_product(body.html or "")
+        extracted = product_extract.extract_product(html)
         products.validate_extracted(extracted)
         if extracted.extracted_field_count() < products.MIN_FIELDS_FOR_VALID_CRAWL:
             failure = f"only {extracted.extracted_field_count()} field(s) extracted; page layout may have changed"

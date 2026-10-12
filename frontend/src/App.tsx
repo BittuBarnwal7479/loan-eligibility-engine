@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { API_BASE_URL, createUpload, getBatch, isTerminal, uploadFile, type BatchStatus } from "./api";
+import {
+  API_BASE_URL,
+  createUpload,
+  getBatch,
+  isImportDone,
+  isTerminal,
+  pollOutcome,
+  uploadFile,
+  type BatchStatus,
+} from "./api";
 import { COLUMN_HELP, REQUIRED_COLUMNS, checkFileBasics, checkHeaderLine, templateCsv } from "./csv";
 
-type Phase = "idle" | "uploading" | "tracking" | "error";
+type Phase = "idle" | "uploading" | "tracking" | "done" | "error";
 
 const POLL_MS = 2000;
 const POLL_LIMIT_MS = 10 * 60 * 1000;
@@ -33,6 +42,7 @@ export default function App() {
   const [storageMode, setStorageMode] = useState<string | null>(null);
   const [batch, setBatch] = useState<BatchStatus | null>(null);
   const [pollNote, setPollNote] = useState<string | null>(null);
+  const [matchingSkipped, setMatchingSkipped] = useState(false);
   const timer = useRef<number | null>(null);
 
   useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
@@ -49,21 +59,28 @@ export default function App() {
     setFile(f);
   }
 
-  function poll(id: string, started: number) {
+  function poll(id: string, started: number, importDoneAt: number | null = null) {
     getBatch(id)
       .then((b) => {
         setBatch(b);
         setPollNote(null);
-        if (isTerminal(b)) return;
-        if (Date.now() - started > POLL_LIMIT_MS) {
-          setPollNote("Stopped polling after 10 minutes. Processing may still continue; refresh to check again.");
+        const doneAt = isImportDone(b) ? (importDoneAt ?? Date.now()) : null;
+        const outcome = pollOutcome(b, doneAt, started, Date.now(), POLL_LIMIT_MS);
+        if (outcome === "continue") {
+          timer.current = window.setTimeout(() => poll(id, started, doneAt), POLL_MS);
           return;
         }
-        timer.current = window.setTimeout(() => poll(id, started), POLL_MS);
+        setPhase("done");
+        if (outcome === "matching_not_triggered") {
+          setMatchingSkipped(true);
+          setPollNote("Import completed. Matching was not triggered in the current configuration.");
+        } else if (outcome === "timed_out") {
+          setPollNote("Stopped polling after 10 minutes. Processing may still continue; refresh to check again.");
+        }
       })
       .catch((e: Error) => {
         setPollNote(`Status check failed: ${e.message}. Retrying...`);
-        timer.current = window.setTimeout(() => poll(id, started), POLL_MS * 2);
+        timer.current = window.setTimeout(() => poll(id, started, importDoneAt), POLL_MS * 2);
       });
   }
 
@@ -73,6 +90,7 @@ export default function App() {
     setProgress(0);
     setBatch(null);
     setProblem(null);
+    setMatchingSkipped(false);
     try {
       const created = await createUpload(file);
       setBatchId(created.upload_batch_id);
@@ -134,7 +152,7 @@ export default function App() {
           <Badge label="Import" value={batch.status} />
           <Badge label="Matching" value={batch.matching_status} />
           <Badge label="Notifications" value={batch.notification_status} />
-          {!isTerminal(batch) && <p className="muted">Matching and notifications continue asynchronously - you can close this page.</p>}
+          {!isTerminal(batch) && !matchingSkipped && <p className="muted">Matching and notifications continue asynchronously - you can close this page.</p>}
           {batch.error_message && <p className="error">{batch.error_message}</p>}
 
           <div className="stats">

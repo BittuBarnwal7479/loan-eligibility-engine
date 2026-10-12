@@ -102,3 +102,37 @@ export function isTerminal(b: BatchStatus): boolean {
   if (["FAILED", "TRIGGER_FAILED"].includes(b.matching_status)) return true;
   return ["COMPLETED", "COMPLETED_WITH_ERRORS"].includes(b.notification_status);
 }
+
+export function isImportDone(b: BatchStatus): boolean {
+  return ["COMPLETED", "COMPLETED_WITH_ERRORS"].includes(b.status);
+}
+
+// Longer than the backend's worst-case webhook attempts (3 x 10 s timeout + backoff), during which
+// matching_status is still NOT_STARTED even though matching is configured.
+export const MATCHING_TRIGGER_GRACE_MS = 60 * 1000;
+
+// Import finished but matching never left NOT_STARTED (e.g. the matching webhook is disabled).
+export function matchingNotTriggered(b: BatchStatus, importDoneAt: number | null, now: number): boolean {
+  return (
+    isImportDone(b) &&
+    b.matching_status === "NOT_STARTED" &&
+    importDoneAt !== null &&
+    now - importDoneAt >= MATCHING_TRIGGER_GRACE_MS
+  );
+}
+
+export type PollOutcome = "continue" | "finished" | "matching_not_triggered" | "timed_out";
+
+// Every outcome except "continue" means polling has stopped and the UI must leave its tracking state.
+export function pollOutcome(
+  b: BatchStatus,
+  importDoneAt: number | null,
+  started: number,
+  now: number,
+  limitMs: number,
+): PollOutcome {
+  if (isTerminal(b)) return "finished";
+  if (matchingNotTriggered(b, importDoneAt, now)) return "matching_not_triggered";
+  if (now - started > limitMs) return "timed_out";
+  return "continue";
+}

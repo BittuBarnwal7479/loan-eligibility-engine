@@ -115,3 +115,37 @@ def test_streamed_chunks_split_mid_line_parse_correctly():
 )
 def test_employment_normalization(raw, expected):
     assert normalize_employment(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Salaried", "salaried"),
+        ("Self-Employed", "self_employed"),
+        ("Business", "self_employed"),
+        ("  salaried ", "salaried"),
+        ("\tSELF-employed  ", "self_employed"),
+        (" BUSINESS ", "self_employed"),
+        ("business", "self_employed"),
+        ("Businessman", None),
+        ("Business Owner", None),
+        ("Contractor", None),
+        ("", None),
+    ],
+)
+def test_real_csv_employment_categories(raw, expected):
+    assert normalize_employment(raw) == expected
+
+
+def test_real_csv_categories_accepted_and_unknown_rows_rejected():
+    text = (
+        f"{HEADER}\n"
+        "U1,a@example.com,1000,700,Salaried,30\n"
+        "U2,b@example.com,1000,700, Self-Employed ,30\n"
+        'U3,c@example.com,1000,700," BUSINESS ",30\n'
+        "U4,d@example.com,1000,700,Contractor,30\n"
+    )
+    result = parse(text)
+    assert [r.employment_status for r in result.records] == ["salaried", "self_employed", "self_employed"]
+    assert result.total_rows == 4 and result.failed_rows == 1
+    assert [(e.row, e.field, e.code) for e in result.errors] == [(5, "employment_status", "invalid_value")]

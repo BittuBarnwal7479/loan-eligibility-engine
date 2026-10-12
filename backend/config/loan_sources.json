@@ -1,5 +1,5 @@
 {
-  "_comment": "Public lender product pages crawled by n8n Workflow A. robots.txt allowed each path when checked on 2026-10-10 (and is re-checked on every run). Rates and criteria are NOT stored here; they are extracted from the live page on every run.",
+  "_comment": "Public lender product pages crawled by n8n Workflow A. robots.txt allowed each path when checked on 2026-10-10 (and is re-checked on every run). Rates and criteria are NOT stored here; they are extracted from the live page on every run. An optional criteria_url (same host as url) is fetched too and both pages are extracted as one product.",
   "user_agent": "LoanEligibilityEngineBot/0.1 (+educational assignment; low-frequency crawl)",
   "min_delay_seconds": 5,
   "sources": [
@@ -21,7 +21,8 @@
       "source_key": "kotak-personal-loan",
       "lender_name": "Kotak Mahindra Bank",
       "product_name": "Kotak Mahindra Bank Personal Loan",
-      "url": "https://www.kotak.com/en/personal-banking/loans/personal-loan.html",
+      "url": "https://www.kotak.bank.in/en/personal-banking/loans/personal-loan.html",
+      "criteria_url": "https://www.kotak.bank.in/en/personal-banking/loans/personal-loan/eligibility.html",
       "enabled": true
     }
   ]
