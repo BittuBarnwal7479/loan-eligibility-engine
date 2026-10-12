@@ -30,6 +30,9 @@ Upload by sending `multipart/form-data` to `upload.url` with every entry of `upl
 ### `POST /local-uploads/{batch_id}?expires=&signature=` (local mode only)
 Stand-in for S3. Verifies the HMAC signature and expiry, stores the file, then starts processing exactly as an S3 event would. `204` on success, `403` invalid or expired URL, `409` batch already received a file, `413` too large.
 
+### `GET /api/uploads?limit=5`
+Most recent batches, newest first (`limit` 1-20, default 5): `{"uploads": [...]}`. Each item has the same fields as `GET /api/uploads/{batch_id}` below except `row_errors`, `matching` and `notifications`. The frontend uses it to show the latest batch after a page reload.
+
 ### `GET /api/uploads/{batch_id}`
 Batch status for polling.
 

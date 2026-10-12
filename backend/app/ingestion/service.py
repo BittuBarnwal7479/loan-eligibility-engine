@@ -61,6 +61,10 @@ def get_batch(conn: psycopg.Connection, batch_id: uuid.UUID | str) -> dict[str, 
     return conn.execute("SELECT * FROM upload_batches WHERE id = %s", (str(batch_id),)).fetchone()
 
 
+def list_recent_batches(conn: psycopg.Connection, limit: int) -> list[dict[str, Any]]:
+    return conn.execute("SELECT * FROM upload_batches ORDER BY created_at DESC LIMIT %s", (limit,)).fetchall()
+
+
 def _claim(conn: psycopg.Connection, key: str, lease_seconds: int) -> dict[str, Any] | None:
     return conn.execute(
         """

@@ -3,6 +3,8 @@ import {
   API_BASE_URL,
   createUpload,
   getBatch,
+  getLatestBatch,
+  importCompletedAt,
   isImportDone,
   isTerminal,
   pollOutcome,
@@ -43,9 +45,30 @@ export default function App() {
   const [batch, setBatch] = useState<BatchStatus | null>(null);
   const [pollNote, setPollNote] = useState<string | null>(null);
   const [matchingSkipped, setMatchingSkipped] = useState(false);
+  const [restored, setRestored] = useState(false);
   const timer = useRef<number | null>(null);
+  const activeId = useRef<string | null>(null); // only the newest batch may update the UI
 
   useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
+
+  // After a page reload, show the most recent persisted batch instead of an empty page.
+  useEffect(() => {
+    let cancelled = false;
+    getLatestBatch()
+      .then((latest) => {
+        if (cancelled || !latest || activeId.current) return;
+        activeId.current = latest.upload_batch_id;
+        setBatchId(latest.upload_batch_id);
+        setRestored(true);
+        poll(latest.upload_batch_id, Date.now(), importCompletedAt(latest));
+      })
+      .catch(() => {
+        /* no history available; the upload form still works */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function choose(f: File | null) {
     setFile(null);
@@ -62,6 +85,7 @@ export default function App() {
   function poll(id: string, started: number, importDoneAt: number | null = null) {
     getBatch(id)
       .then((b) => {
+        if (activeId.current !== id) return;
         setBatch(b);
         setPollNote(null);
         const doneAt = isImportDone(b) ? (importDoneAt ?? Date.now()) : null;
@@ -79,6 +103,7 @@ export default function App() {
         }
       })
       .catch((e: Error) => {
+        if (activeId.current !== id) return;
         setPollNote(`Status check failed: ${e.message}. Retrying...`);
         timer.current = window.setTimeout(() => poll(id, started, importDoneAt), POLL_MS * 2);
       });
@@ -91,8 +116,13 @@ export default function App() {
     setBatch(null);
     setProblem(null);
     setMatchingSkipped(false);
+    setRestored(false);
+    setPollNote(null);
+    activeId.current = "pending-upload"; // stops a restored batch's poll from updating the UI
+    if (timer.current) window.clearTimeout(timer.current);
     try {
       const created = await createUpload(file);
+      activeId.current = created.upload_batch_id;
       setBatchId(created.upload_batch_id);
       setStorageMode(created.storage_mode);
       await uploadFile(created.upload, file, setProgress);
@@ -149,6 +179,11 @@ export default function App() {
       {batch && (
         <section className="card">
           <h2>3. Processing status</h2>
+          {restored && (
+            <p className="muted">
+              Showing the most recent upload: <code>{batch.original_filename}</code>, uploaded {new Date(batch.created_at).toLocaleString()}.
+            </p>
+          )}
           <Badge label="Import" value={batch.status} />
           <Badge label="Matching" value={batch.matching_status} />
           <Badge label="Notifications" value={batch.notification_status} />

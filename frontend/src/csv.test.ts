@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  getLatestBatch,
+  importCompletedAt,
   isImportDone,
   isTerminal,
   MATCHING_TRIGGER_GRACE_MS,
@@ -95,5 +97,36 @@ describe("poll outcome (UI leaves tracking state whenever polling stops)", () =>
   it("reports finished and timed-out as stop outcomes", () => {
     expect(pollOutcome({ ...done, matching_status: "COMPLETED", notification_status: "COMPLETED" }, t0, t0, t0, limit)).toBe("finished");
     expect(pollOutcome({ ...done, status: "PROCESSING" }, null, t0, t0 + limit + 1, limit)).toBe("timed_out");
+  });
+});
+
+describe("restoring the latest batch after a page reload", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("fetches only the newest batch and returns it", async () => {
+    const latest = { upload_batch_id: "b-1", status: "COMPLETED", total_rows: 10000 };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ uploads: [latest] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await getLatestBatch()).toEqual(latest);
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/uploads\?limit=1$/));
+  });
+
+  it("returns null when there are no uploads yet", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ uploads: [] }), { status: 200 })));
+    expect(await getLatestBatch()).toBeNull();
+  });
+
+  it("uses the server completion time so an old dry-run batch stops at once", () => {
+    const completed = "2026-10-12T19:22:55.826Z";
+    const doneAt = importCompletedAt({ processing_completed_at: completed });
+    expect(doneAt).toBe(Date.parse(completed));
+    const b = { status: "COMPLETED", matching_status: "NOT_STARTED", notification_status: "NOT_STARTED" } as BatchStatus;
+    const reloadedAt = Date.parse(completed) + 60 * 60 * 1000;
+    expect(pollOutcome(b, doneAt, reloadedAt, reloadedAt, 10 * 60 * 1000)).toBe("matching_not_triggered");
+  });
+
+  it("has no completion time while the import is still running", () => {
+    expect(importCompletedAt({ processing_completed_at: null })).toBeNull();
+    expect(importCompletedAt({ processing_completed_at: "not-a-date" })).toBeNull();
   });
 });

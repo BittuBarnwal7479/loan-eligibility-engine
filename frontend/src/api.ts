@@ -50,7 +50,11 @@ export interface BatchStatus {
   notification_status: string;
   matching: MatchingStats | null;
   notifications: Record<string, number>;
+  created_at: string;
+  processing_completed_at: string | null;
 }
+
+export type BatchSummary = Omit<BatchStatus, "row_errors" | "matching" | "notifications">;
 
 async function json<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -95,6 +99,17 @@ export function uploadFile(target: UploadTarget, file: File, onProgress: (fracti
 
 export async function getBatch(batchId: string): Promise<BatchStatus> {
   return json<BatchStatus>(await fetch(`${API_BASE_URL}/api/uploads/${encodeURIComponent(batchId)}`));
+}
+
+export async function getLatestBatch(): Promise<BatchSummary | null> {
+  const body = await json<{ uploads: BatchSummary[] }>(await fetch(`${API_BASE_URL}/api/uploads?limit=1`));
+  return body.uploads[0] ?? null;
+}
+
+// Server-side import completion time, so a reloaded page does not restart the matching grace period.
+export function importCompletedAt(b: Pick<BatchStatus, "processing_completed_at">): number | null {
+  const t = b.processing_completed_at ? Date.parse(b.processing_completed_at) : NaN;
+  return Number.isNaN(t) ? null : t;
 }
 
 export function isTerminal(b: BatchStatus): boolean {

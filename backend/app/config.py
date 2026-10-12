@@ -77,12 +77,14 @@ class Settings:
     notification_test_recipient: str | None
     notification_from_email: str | None
     notification_max_attempts: int
+    notification_max_per_run: int
     llm_enabled: bool
     llm_model: str
     llm_max_calls_per_run: int
     cors_origins: list[str] = field(default_factory=list)
 
 
+MAX_NOTIFICATIONS_PER_RUN = 200  # SES sandbox daily quota; also the per-run cap's default
 PLACEHOLDER_SECRET = "change-me"  # noqa: S105 - the placeholder we reject, not a secret
 
 
@@ -104,6 +106,9 @@ def get_settings() -> Settings:
     notification_mode = (_env("NOTIFICATION_MODE", "dry_run") or "dry_run").lower()
     if notification_mode not in {"dry_run", "smtp", "ses"}:
         raise RuntimeError("NOTIFICATION_MODE must be dry_run, smtp or ses")
+    notification_max_per_run = _env_int("NOTIFICATION_MAX_PER_RUN", MAX_NOTIFICATIONS_PER_RUN)
+    if not 1 <= notification_max_per_run <= MAX_NOTIFICATIONS_PER_RUN:
+        raise RuntimeError(f"NOTIFICATION_MAX_PER_RUN must be between 1 and {MAX_NOTIFICATIONS_PER_RUN}")
     database_url = _database_url()
     _reject_placeholders(database_url)
     return Settings(
@@ -129,6 +134,7 @@ def get_settings() -> Settings:
         notification_test_recipient=_env("NOTIFICATION_TEST_RECIPIENT"),
         notification_from_email=_env("NOTIFICATION_FROM_EMAIL"),
         notification_max_attempts=_env_int("NOTIFICATION_MAX_ATTEMPTS", 3),
+        notification_max_per_run=notification_max_per_run,
         llm_enabled=_env_bool("LLM_ENABLED", False),
         llm_model=_env("LLM_MODEL", "claude-opus-5-5") or "claude-opus-5-5",
         llm_max_calls_per_run=_env_int("LLM_MAX_CALLS_PER_RUN", 10),
