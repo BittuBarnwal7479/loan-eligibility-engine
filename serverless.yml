@@ -133,7 +133,7 @@ functions:
     handler: backend/handlers/process_csv.handler
     description: S3 ObjectCreated -> validate CSV and import into PostgreSQL, then trigger n8n Workflow B
     timeout: 300
-    memorySize: 1024
+    memorySize: 512   # this AWS account currently caps Lambda memory at 512 MB
     maximumRetryAttempts: 2
     # No `s3` event: the bucket is not managed by this stack, and `existing: true` would deploy a
     # Serverless custom-resource Lambda on the deprecated nodejs18.x runtime. Add the bucket's

@@ -47,7 +47,35 @@ _SCORE_ADVISORY = re.compile(r"ideal|recommended|preferred|good|better", re.I)
 _EMPLOYMENT_CLAUSE = re.compile(r"employment\s*(?:type)?\s*:\s*([^.]{10,240})", re.I)
 _SALARIED = re.compile(r"\bsalaried\b", re.I)
 _SELF_EMPLOYED = re.compile(r"\bself[\s-]?employed\b", re.I)
-_EXPERIENCE = re.compile(r"(?:work|overall|total)\s+experience\s*:?\s*(?:of\s+)?(\d{1,2})\s*(?:\+\s*)?years?", re.I)
+# Statements about which documents prove income say nothing about who is eligible.
+# Not the bare word "document": tab labels such as "Eligibility Documentation" sit next to real criteria.
+_DOCUMENT_PROOF = re.compile(
+    r"\bproof\b|salary\s+slips?|bank\s+statements?|\bITR\b|income\s+tax\s+returns?|taxation", re.I
+)
+
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+_YEARS = r"(\d{1,2}|" + "|".join(_NUMBER_WORDS) + r")\s*(?:\+\s*)?years?"
+_EXPERIENCE_PATTERNS = (
+    # "Work Experience: 2 years"
+    re.compile(r"(?:work|overall|total)\s+experience\s*:?\s*(?:of\s+)?" + _YEARS, re.I),
+    # "at least one year of work experience", "at least one year or more work experience"
+    re.compile(
+        r"at\s+least\s+" + _YEARS + r"\s+(?:or\s+more\s+)?(?:of\s+)?(?:work\s+|total\s+|overall\s+)?experience", re.I
+    ),
+    # "An Employment period of at least one year"
+    re.compile(r"employment\s+period\s+of\s+at\s+least\s+" + _YEARS, re.I),
+)
 
 
 @dataclass
@@ -181,8 +209,19 @@ def extract_credit_score(text: str, out: ExtractedProduct) -> None:
         if _SCORE_HARD.search(clause):
             hard.append(score)
             out.notes.append(f"credit score clause: '{_snippet(text, m, 20)}'")
+        else:
+            # Neither a stated minimum nor guidance (e.g. a bare "685 or higher"): record it, never apply it.
+            out.notes.append(f"credit score statement not applied (unclear wording): '{_snippet(text, m, 20)}'")
     if hard:
         out.min_credit_score = max(hard)
+
+
+def _self_employed_is_eligibility(sentence: str) -> bool:
+    """True if a self-employed mention is not part of an income-proof/document statement."""
+    return any(
+        not _DOCUMENT_PROOF.search(sentence[max(0, m.start() - 120) : m.end() + 120])
+        for m in _SELF_EMPLOYED.finditer(sentence)
+    )
 
 
 def extract_employment(text: str, out: ExtractedProduct) -> None:
@@ -194,15 +233,18 @@ def extract_employment(text: str, out: ExtractedProduct) -> None:
     types = []
     if _SALARIED.search(haystack):
         types.append("salaried")
-    if _SELF_EMPLOYED.search(haystack):
+    if any(_self_employed_is_eligibility(sentence) for sentence in re.split(r"(?<=[.!?])\s+", haystack)):
         types.append("self_employed")
     if types:
         out.employment_types = types
         out.notes.append(f"employment types from eligibility keywords: {types}")
     if clauses:
         out.employment_criteria_text = clauses[0][:240]
-    for m in _EXPERIENCE.finditer(text):
-        criterion = f"Work experience: {m.group(1)} years (as published)"
+    matches = sorted((m for p in _EXPERIENCE_PATTERNS for m in p.finditer(text)), key=lambda m: m.start())
+    for m in matches:
+        raw = m.group(1).lower()
+        years = int(raw) if raw.isdigit() else _NUMBER_WORDS[raw]
+        criterion = f"Work experience: {years} year{'' if years == 1 else 's'} (as published)"
         if criterion not in out.other_criteria:
             out.other_criteria.append(criterion)
 
