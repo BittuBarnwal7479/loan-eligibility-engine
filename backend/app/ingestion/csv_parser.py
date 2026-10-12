@@ -36,6 +36,7 @@ EMPLOYMENT_ALIASES: dict[str, str] = {
     "self_employed": "self_employed",
     "selfemployed": "self_employed",
     "self_employed_professional": "self_employed",
+    "business": "self_employed",  # business owner; same rule as the LLM normalizer prompt
     "unemployed": "unemployed",
     "student": "student",
     "retired": "retired",
